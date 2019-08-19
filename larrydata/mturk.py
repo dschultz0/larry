@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 import json
 import zlib
 import base64
-import awslarry.s3 as s3
+import larrydata.s3 as s3
 
 
 def client(environment='prod', hit_id=None):
