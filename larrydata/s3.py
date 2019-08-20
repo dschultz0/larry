@@ -37,6 +37,19 @@ def resource():
     return _resource
 
 
+def delete_object(bucket=None, key=None, uri=None):
+    """
+    Deletes the object defined by the bucket/key pair (or uri).
+    :param bucket: The S3 bucket
+    :param key: The key of the object
+    :param uri: An s3:// path containing the bucket and key of the object
+    :return: Dict containing the boto3 response
+    """
+    if uri:
+        (bucket, key) = decompose_uri(uri)
+    return resource().Bucket(bucket).Object(key=key).delete()
+
+
 def get_object(bucket=None, key=None, uri=None):
     """
     Performs a 'get' of the object defined by the bucket/key pair (or uri).
