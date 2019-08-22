@@ -56,6 +56,10 @@ def use_sandbox():
     _client = None
 
 
+def environment():
+    return 'production' if _production else 'sandbox'
+
+
 def set_environment(environment='prod', hit_id=None):
     """
     Set the environment that the library should use.
@@ -101,7 +105,7 @@ def get_assignment(assignment_id):
     :return: A tuple of assignment and hit dicts
     """
     response = client().get_assignment(AssignmentId=assignment_id)
-    return resolve_assignment_answer(response['Answer']), response['HIT']
+    return resolve_assignment_answer(response['Assignment']), response['HIT']
 
 
 def get_hit(hit_id):
@@ -121,7 +125,7 @@ def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=Tru
     :param submitted: Boolean indicating if assignments in a state of Submitted should be retrieved, default is True
     :param approved: Boolean indicating if assignments in a state of Approved should be retrieved, default is True
     :param rejected: Boolean indicating if assignments in a state of Rejected should be retrieved, default is True
-    :return: A list of Assignment objects
+    :return: A generator containing the assignments
     """
     statuses = []
     if submitted:
@@ -131,17 +135,39 @@ def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=Tru
     if rejected:
         statuses.append('Rejected')
     pages_to_get = True
-    assignments = []
     next_token = None
     while pages_to_get:
-        response = client().list_assignments_for_hit(HITId=hit_id, NextToken=next_token, AssignmentStatuses=statuses)
+        if next_token:
+            response = client().list_assignments_for_hit(HITId=hit_id, NextToken=next_token, AssignmentStatuses=statuses)
+        else:
+            response = client().list_assignments_for_hit(HITId=hit_id, AssignmentStatuses=statuses)
         if response.get('NextToken'):
             next_token = response['NextToken']
         else:
             pages_to_get = False
         for assignment in response.get('Assignments',[]):
-            assignments.append(resolve_assignment_answer(assignment))
-    return assignments
+            yield resolve_assignment_answer(assignment)
+
+
+def list_hits():
+    """
+    Retrieves all of the HITs in your account with the exception of those that have been deleted (automatically or by
+    request).
+    :return: A generator containing the HITs
+    """
+    pages_to_get = True
+    next_token = None
+    while pages_to_get:
+        if next_token:
+            response = client().list_hits(NextToken=next_token)
+        else:
+            response = client().list_hits()
+        if response.get('NextToken'):
+            next_token = response['NextToken']
+        else:
+            pages_to_get = False
+        for hit in response.get('HITs',[]):
+            yield hit
 
 
 def preview_url(hit_type_id):
@@ -188,6 +214,8 @@ def resolve_assignment_answer(assignment):
     """
     result = assignment.copy()
     result['Answer'] = parse_answers(assignment['Answer'])
+    if 'AcceptTime' in result and 'SubmitTime' in result:
+        result['WorkTime'] = result['SubmitTime'] - result['AcceptTime']
     return result
 
 
@@ -205,7 +233,7 @@ def parse_answers(answer):
     # TODO: Need to test this for the various types
     for a in root.findall('mt:Answer', ns):
         name = a.find('mt:QuestionIdentifier', ns).text
-        if a.find('mt:FreeText', ns):
+        if a.find('mt:FreeText', ns) is not None:
             answer_text = a.find('mt:FreeText', ns).text
             try:
                 result[name] = json.loads(answer_text)
@@ -222,7 +250,7 @@ def parse_answers(answer):
     return result
 
 
-def score_answers(answers):
+def _score_answers(answers):
     results = {}
     for answer in answers:
         responses = answer['Answer']
@@ -235,19 +263,19 @@ def score_answers(answers):
     return results
 
 
-def count_responses(scores):
+def _count_responses(scores):
     count = 0
     for key, value in scores.items():
         count += value
     return count
 
 
-def consolidate_answers(answers, threshold):
-    scores = score_answers(answers)
+def _consolidate_answers(answers, threshold):
+    scores = _score_answers(answers)
     print(scores)
     results = {}
     for key, response_scores in scores.items():
-        responses = count_responses(response_scores)
+        responses = _count_responses(response_scores)
         results[key] = None
         for response, response_score in response_scores.items():
             if response_score * 100 / responses > threshold:
@@ -270,22 +298,23 @@ def prepare_requester_annotation(payload):
     :param payload: The content to be stored in the RequesterAnnotation field
     :return: A string value that can be placed in the RequesterAnnotation field
     """
-    if type(payload) == dict:
-        content = json.dumps(payload, separators=(',', ':'))
+
+    payload_string = json.dumps(payload, separators=(',', ':')) if type(payload) == dict else payload
 
     # Use the annotation 'as is' if possible
-    if len(payload) < 243:
-        return '{'+'"payload":'+payload+'}'
+    if len(payload_string) < 243:
+        return json.dumps({'payload': payload}, separators=(',', ':'))
 
-    # Attempt to compress it (don't bother if it's longer than 500 chars)
-    if len(payload) < 500:
-        compressed = str(base64.b85encode(zlib.compress(payload.encode())), 'utf-8')
+    else:
+        # Attempt to compress it
+        compressed = str(base64.b85encode(zlib.compress(payload_string.encode())), 'utf-8')
         if len(compressed) < 238:
-            return '{"payloadBytes":'+compressed+'}'
+            return json.dumps({'payloadBytes': compressed}, separators=(',', ':'))
 
-    # Else post it to s3
-    uri = s3.write_temp_object(payload, 'mturk_requester_annotation/')
-    return '{"payloadURI":"'+uri+'"}'
+        else:
+            # Else post it to s3
+            uri = s3.write_temp_object(payload, 'mturk_requester_annotation/')
+            return json.dumps({'payloadURI': uri}, separators=(',', ':'))
 
 
 def retrieve_requester_annotation(content, delete_temp_file = False):
@@ -327,7 +356,7 @@ def render_jinja_template_question(arguments, template=None, template_uri=None):
     try:
         from jinja2 import Template
         if template_uri:
-            template = s3.read_text(uri=template_uri)
+            template = s3.read_str(uri=template_uri)
         jinja_template = Template(template)
         return render_html_question(jinja_template.render(arguments))
     except ImportError as e:
@@ -342,11 +371,9 @@ def render_html_question(html, frame_height=0):
     :param frame_height: Frame height to use for the Worker viewport, zero by default to use the whole window
     :return: The rendered HTMLQuestion XML string
     """
-    return '''
-        <HTMLQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2011-11-11/HTMLQuestion.xsd">
-        <HTMLContent><![CDATA[{}]]></HTMLContent>
-        <FrameHeight>{}</FrameHeight>
-        </HTMLQuestion>'''.format(html, frame_height)
+    return '''<HTMLQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2011-11-11/HTMLQuestion.xsd">
+                <HTMLContent><![CDATA[{}]]></HTMLContent><FrameHeight>{}</FrameHeight>
+              </HTMLQuestion>'''.format(html, frame_height)
 
 
 def render_external_question(url, frame_height=0):
@@ -356,8 +383,6 @@ def render_external_question(url, frame_height=0):
     :param frame_height: Frame height to use for the Worker viewport, zero by default to use the whole window
     :return: The rendered ExternalQuestion XML string
     """
-    return '''
-        <ExternalQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2006-07-14/ExternalQuestion.xsd">
-          <ExternalURL>{}</ExternalURL>
-          <FrameHeight>{}</FrameHeight>
-        </ExternalQuestion>'''.format(url, frame_height)
+    return '''<ExternalQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2006-07-14/ExternalQuestion.xsd">
+                <ExternalURL>{}</ExternalURL><FrameHeight>{}</FrameHeight>
+              </ExternalQuestion>'''.format(url, frame_height)

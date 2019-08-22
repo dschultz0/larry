@@ -89,7 +89,7 @@ def read_dict(bucket=None, key=None, uri=None, encoding='utf-8'):
     return json.loads(read_object(bucket, key, uri).decode(encoding))
 
 
-def read_text(bucket=None, key=None, uri=None, encoding='utf-8'):
+def read_str(bucket=None, key=None, uri=None, encoding='utf-8'):
     """
     Reads in the s3 object defined by the bucket/key pair (or uri) and
     decodes it to text.
@@ -123,6 +123,26 @@ def read_list_of_dict(bucket=None, key=None, uri=None, encoding='utf-8', newline
     return records
 
 
+def read_list_of_str(bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    """
+    Reads in the s3 object defined by the bucket/key pair (or uri) and
+    loads the JSON Lines data into a list of dict objects.
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
+    :param newline: The line separator to use when reading in the object, \n by default
+    :return: The contents of the object as a list of dict objects
+    """
+    obj = read_object(bucket, key, uri)
+    lines = obj.decode(encoding).split(newline)
+    records = []
+    for line in lines:
+        if len(line) > 0:
+            records.append(line)
+    return records
+
+
 def read_pillow_image(bucket=None, key=None, uri=None):
     """
     Reads in the s3 object defined by the bucket/key pair (or uri) and
@@ -130,10 +150,10 @@ def read_pillow_image(bucket=None, key=None, uri=None):
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
-    :return: The contents of the object as a Pillow image object'p0
+    :return: The contents of the object as a Pillow image object
     """
     try:
-        from Pillow import Image
+        from PIL import Image
         return Image.open(BytesIO(read_object(bucket, key, uri)))
     except ImportError as e:
         # Simply raise the ImportError to let the user know this requires Pillow to function
@@ -154,7 +174,14 @@ def write(body, bucket=None, key=None, uri=None, acl=None, content_type=None):
     if uri:
         (bucket, key) = decompose_uri(uri)
     obj = resource().Bucket(bucket).Object(key=key)
-    obj.put(Body=body, ACL=acl, ContentType=content_type)
+    if acl and content_type:
+        obj.put(Body=body, ACL=acl, ContentType=content_type)
+    elif acl:
+        obj.put(Body=body, ACL=acl)
+    elif content_type:
+        obj.put(Body=body, ContentType=content_type)
+    else:
+        obj.put(Body=body)
     return compose_uri(bucket, key)
 
 
@@ -171,7 +198,7 @@ def write_temp_object(value, prefix, acl=None):
     return write_object(value, bucket=bucket, key=key, acl=acl)
 
 
-def write_object(value, bucket=None, key=None, uri=None, acl=None):
+def write_object(value, bucket=None, key=None, uri=None, acl=None, newline='\n'):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -180,6 +207,7 @@ def write_object(value, bucket=None, key=None, uri=None, acl=None):
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
     :param acl: The canned ACL to apply to the object
+    :param newline: Character(s) to use as a newline for list objects
     :return: The URI of the object written to S3
     """
     if type(value) is dict:
@@ -189,7 +217,10 @@ def write_object(value, bucket=None, key=None, uri=None, acl=None):
     elif type(value) is list:
         buff = StringIO()
         for row in value:
-            buff.write(json.dumps(row) + '\n')
+            if type(row) is dict:
+                buff.write(json.dumps(row) + newline)
+            else:
+                buff.write(str(row) + newline)
         return write(buff.getvalue(), bucket, key, uri, acl)
     elif value is None:
         return write('', bucket, key, uri, acl)
@@ -201,7 +232,7 @@ def write_pillow_image(image, image_format, bucket=None, key=None, uri=None):
     """
     Write an image to the bucket/key pair (or uri).
     :param image: The image to write to S3
-    :param image_format: The format of the image (png, jpg, etc)
+    :param image_format: The format of the image (png, jpeg, etc)
     :param bucket: The S3 bucket for the object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
@@ -407,25 +438,24 @@ def compose_uri(bucket, key):
     return "s3://{}/{}".format(bucket, key)
 
 
-def list_objects(bucket=None, prefix=None, uri=None):
+def list_objects(bucket=None, prefix=None, uri=None, include_empty_keys=False):
     """
     Returns a list of the object keys in the provided bucket that begin with the provided prefix.
     :param bucket: The S3 bucket to query
     :param prefix: The key prefix to use in searching the bucket
     :param uri: An s3:// path containing the bucket and prefix
-    :return: A list of object keys
+    :param include_empty_keys: True if you want to include keys associated with objects of size=0
+    :return: A generator of object keys
     """
     if uri:
         (bucket, prefix) = decompose_uri(uri)
-    objects = []
     paginator = client().get_paginator('list_objects')
     operation_parameters = {'Bucket': bucket, 'Prefix': prefix}
     page_iterator = paginator.paginate(**operation_parameters)
     for page in page_iterator:
-        for obj in page['Contents']:
-            if obj['Size'] > 0:
-                objects.append(obj['Key'])
-    return objects
+        for obj in page.get('Contents',[]):
+            if obj['Size'] > 0 or include_empty_keys:
+                yield obj['Key']
 
 
 def fetch(url, bucket=None, key=None, uri=None):
@@ -506,11 +536,24 @@ def make_public(bucket=None, key=None, uri=None):
     :param bucket: The S3 bucket for object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
-    :return: The URI of the object written to S3
+    :return: The URL of the object
     """
     if uri:
         (bucket, key) = decompose_uri(uri)
     client().put_object_acl(Bucket=bucket, Key=key, ACL='public-read')
+    return get_public_url(bucket=bucket, key=key)
+
+
+def get_public_url(bucket=None, key=None, uri=None):
+    """
+    Returns the public URL of an S3 object (assuming it's public).
+    :param bucket: The S3 bucket for object
+    :param key: The key of the object
+    :param uri: An s3:// path containing the bucket and key of the object
+    :return: The URL of the object
+    """
+    if uri:
+        (bucket, key) = decompose_uri(uri)
     return 'https://{}.s3.amazonaws.com/{}'.format(bucket, key)
 
 
