@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="larrydata",
-    version="0.0.1",
+    version="0.1.0",
     author="Dave Schultz",
     author_email="djschult@gmail.com",
     description="Library of helper modules for common data tasks using AWS resources such as S3, SQS, MTurk and others",
