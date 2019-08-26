@@ -1,10 +1,10 @@
-import boto3
 from botocore.exceptions import ClientError
 import xml.etree.ElementTree as ET
 import json
 import zlib
 import base64
 import larrydata.s3 as s3
+import larrydata
 
 
 # Local client
@@ -22,13 +22,13 @@ def client():
     global _client, _production
     if _client is None:
         if _production:
-            _client = boto3.client(
+            _client = larrydata.session().client(
                 service_name='mturk',
                 region_name='us-east-1',
                 endpoint_url="https://mturk-requester.us-east-1.amazonaws.com"
             )
         else:
-            _client = boto3.client(
+            _client = larrydata.session().client(
                 service_name='mturk',
                 region_name='us-east-1',
                 endpoint_url="https://mturk-requester-sandbox.us-east-1.amazonaws.com"
@@ -69,7 +69,7 @@ def set_environment(environment='prod', hit_id=None):
     """
     global _client, _production
     if hit_id:
-        mturk = boto3.client(
+        mturk = larrydata.session().client(
             service_name='mturk',
             region_name='us-east-1',
             endpoint_url="https://mturk-requester.us-east-1.amazonaws.com"
@@ -80,7 +80,7 @@ def set_environment(environment='prod', hit_id=None):
             _production = True
             _client = mturk
         except ClientError:
-            mturk = boto3.client(
+            mturk = larrydata.session().client(
                 service_name='mturk',
                 region_name='us-east-1',
                 endpoint_url="https://mturk-requester-sandbox.us-east-1.amazonaws.com"

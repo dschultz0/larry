@@ -1,4 +1,3 @@
-import boto3
 import botocore
 from botocore.exceptions import ClientError
 from boto3.s3.transfer import TransferConfig
@@ -8,6 +7,7 @@ import json
 import larrydata.sts as sts
 import uuid
 import urllib.request
+import larrydata
 
 
 # Local S3 client and resource objects
@@ -22,7 +22,7 @@ def client():
     """
     global _client
     if _client is None:
-        _client = boto3.client('s3')
+        _client = larrydata.session().client('s3')
     return _client
 
 
@@ -33,7 +33,7 @@ def resource():
     """
     global _resource
     if _resource is None:
-        _resource = boto3.resource('s3')
+        _resource = larrydata.session().resource('s3')
     return _resource
 
 
