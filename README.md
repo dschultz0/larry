@@ -18,7 +18,7 @@ my_dict = json.loads(contents.decode('utf-8'))
 ```
 
 In contrast, larrydata takes care of all those steps for you and let's you simply call one function to get your data.
-In addition to accessing data using bucket/key pairs, you can S3 URIs like those commonly used in SageMaker Ground Truth.
+In addition to accessing data using bucket/key pairs, you can S3 URIs like those commonly used in SageMaker.
 ```python
 from larrydata import s3
 
@@ -40,7 +40,7 @@ s3.write_object(my_dict, bucket='mybucket', key='myfile.json')
 my_list = ['a','b','c','d']
 s3.write_object(my_list, bucket='mybucket', key='myfile.txt')
 
-# Write a JSON lines file to S3
+# Write a JSON lines file to S3 (commonly used for SageMaker manifest files)
 my_dictlist = [{'a': 1}, {'b': 2}, {'c': 3}]
 s3.write_object(my_dictlist, bucket='mybucket', key='myfile.jsonl')
 ```
@@ -52,5 +52,47 @@ of their APIs. The MTurk module includes a number of features to make using MTur
 * Potentially expensive operations such as list_hits and list_assignments_for_hit return generators
 * Utilities are included to easily generate HTMLQuestion and ExternalQuestion XML objects with integrated Jinja2 templating
 * Helpers to enable state data in the RequesterAnnotation field
+
+The combination of these features means that creating a HIT in MTurk is as easy as the following:
+```python
+import larrydata.mturk as mturk
+
+# Indicate we want to use the production environment
+mturk.use_production()
+
+# Load a template from S3 and populate it with values
+task_data = {'image_url': 'https://mywebsite.com/images/233.jpg'}
+question_xml = mturk.render_jinja_template_question(task_data, template_uri='s3://mybucket/templates/imageCat.html')
+
+# Format the source data so it can be stored in the RequesterAnnotation field for use in tracking
+task_data['request_id'] = 'MY_TRACKING_ID'
+annotation_payload = mturk.prepare_requester_annotation(task_data)
+
+# Create a HIT
+hit = mturk.create_hit(title='Test task', description='Categorize images', reward='0.05', max_assignments=5,
+                       lifetime=86400, assignment_duration=600, question=question_xml, annotation=annotation_payload)
+
+# Display where the HIT can be viewed on the Worker website
+hit_id = hit['HITId']
+hit_type_id = hit['HITTypeId']
+print('HIT {} created, preview at {}'.format(hit_id, mturk.preview_url(hit_type_id)))
+```
+Getting the results from that task is as simple as the following:
+```python
+import larrydata.mturk as mturk
+
+# Indicate we want to use the production environment
+mturk.use_production()
+
+# retrieve the HIT
+hit = mturk.get_hit(hit_id)
+
+# retrieve the requester annotation data
+task_data = mturk.retrieve_requester_annotation(hit=hit)
+
+# get the results
+for assignment in mturk.list_assignments_for_hit(hit_id):
+    print('Worker {} responded with {}'.format(assignment['WorkerId'], assignment['Answer']['category']))
+```
 
 More features will be added over time, feel free to submit your feature suggestions.
