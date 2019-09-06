@@ -13,9 +13,9 @@ when you need them.
 pip install larrydata
 ```
 In addition, you can easily add larrydata to your AWS Lambda functions by adding one of the following public Layers:
-* larrydata: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:10`
-* larrydata with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinja:10`
-* larrydata with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinjaPillow:10`
+* larrydata: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:16`
+* larrydata with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinja:16`
+* larrydata with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinjaPillow:16`
 
 ## Functional S3 interactions
 When using boto3 alone, the following is how you would read in a JSON formatted object from S3 into a dict:

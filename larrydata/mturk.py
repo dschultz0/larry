@@ -135,9 +135,9 @@ def set_environment(environment='prod', hit_id=None):
 
 def _map_parameters(parameters, key_map):
     result = {}
-    for k, i in parameters.items():
-        if i is not None:
-            result[key_map.get(k, k)] = i
+    for k, i in key_map.items():
+        if parameters.get(k) is not None:
+            result[i] = parameters[k]
     return result
 
 
@@ -175,6 +175,10 @@ def create_additional_assignments_for_hit(hit_id, additional_assignments, reques
     return mturk_client.create_additional_assignments_for_hit(**params)
 
 
+def add_assignments(hit_id, additional_assignments, request_token, mturk_client=client()):
+    return create_additional_assignments_for_hit(hit_id, additional_assignments, request_token, mturk_client)
+
+
 def create_hit(title,
                description,
                reward,
@@ -190,7 +194,8 @@ def create_hit(title,
                assignment_review_policy=None,
                hit_review_policy=None,
                hit_layout_id=None,
-               hit_layout_parameters=None, mturk_client=client()):
+               hit_layout_parameters=None,
+               mturk_client=client()):
     params = _map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
@@ -400,38 +405,75 @@ def parse_answers(answer):
     return result
 
 
-def _score_answers(answers):
-    results = {}
-    for answer in answers:
-        responses = answer['Answer']
-        for response in responses:
-            for key, value in response.items():
-                scores = results.get(key, {})
-                score = scores.get(value, 0)
-                scores[value] = score + 1
-                results[key] = scores
-    return results
+def _extract_response_detail(assignments, identifier, exclude_rejected=True):
+    responses = []
+    response_count = 0
+    work_time = 0
+    for assignment in assignments:
+        responses.append({
+            'WorkerId': assignment['WorkerId'],
+            'Response': assignment['Answer'].get(identifier),
+            'AssignmentId': assignment['AssignmentId'],
+            'HITId': assignment['HITId'],
+            'AcceptTime': assignment['AcceptTime'],
+            'WorkTime': assignment['WorkTime'],
+            'Excluded': assignment['AssignmentStatus'] == 'Rejected'
+        })
+        if assignment['AssignmentStatus'] != 'Rejected':
+            response_count += 1
+            work_time += int(assignment['WorkTime'].total_seconds())
+    return {
+        'Responses': responses,
+        'ResponseCount': response_count,
+        'WorkTime': work_time,
+        'Identifier': identifier
+    }
 
 
-def _count_responses(scores):
-    count = 0
-    for key, value in scores.items():
-        count += value
-    return count
+def _score_text_responses(response_detail):
+    scores = {}
+    for response in response_detail['Responses']:
+        value = response['Response']
+        score = scores.get(value, 0)
+        scores[value] = score + 1
+    return scores
 
 
-def _consolidate_answers(answers, threshold):
-    scores = _score_answers(answers)
-    print(scores)
-    results = {}
-    for key, response_scores in scores.items():
-        responses = _count_responses(response_scores)
-        results[key] = None
-        for response, response_score in response_scores.items():
-            if response_score * 100 / responses > threshold:
-                results[key] = response
-                break
-    return results
+def _consolidate_text_response(assignments, identifier, threshold, exclude_rejected=True):
+    response_detail = _extract_response_detail(assignments, identifier, exclude_rejected=exclude_rejected)
+    response_detail['ScoredResponses'] = _score_text_responses(response_detail)
+    answer = None
+    for response, score in response_detail['ScoredResponses'].items():
+        if score * 100 / response_detail['ResponseCount'] >= threshold:
+            answer = response
+            break
+    if answer is not None:
+        for response in response_detail['Responses']:
+            response['Accuracy'] = response['Response'] == answer
+    return answer, response_detail
+
+
+def consolidate_crowd_classifier(hit_id, threshold=60, mturk_client=client(), exclude_rejected=True):
+    """
+    Retrieves Worker responses for a HITId and computes a consolidated answer based on a simple plurality of responses.
+    For example, if the HIT has 3 Assignments, and Workers respond with responses of A, A, and B, the resulting
+    response would be A since 66.7% of Workers agree on a response of A which is higher than the default threshold of
+    60%. If the threshold were set at 80% than None would be returned. Similarly, if Workers responded with A, B, and C,
+    the result would be None since none of the answers received 60% of responses. By default, Assignments that have
+    already been rejected are ignored for purposes of scoring responses.
+    :param hit_id: The HITId to retrieve Assignments for
+    :param threshold: A 0-100 percentage value (80 = 80%) to use a a threshold in looking for agreement amongst Workers
+    :param mturk_client: The MTurk client to use if you don't want to use the default client
+    :param exclude_rejected: Boolean value (default=True) indicating that Assignments that have already been
+    rejected should be excluded
+    :return: A tuple containing the result and an object with detail on the responses for use in measuring Worker
+    accuracy
+    """
+    return _consolidate_text_response(
+        list_assignments_for_hit(hit_id, mturk_client=mturk_client),
+        'category.label',
+        threshold,
+        exclude_rejected=exclude_rejected)
 
 
 def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_identifier=None):
@@ -471,18 +513,23 @@ def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_iden
             return json.dumps({'payloadURI': uri}, separators=(',', ':'))
 
 
-def retrieve_requester_annotation(hit=None, content=None, delete_temp_file=False, s3_resource=s3.resource()):
+def retrieve_requester_annotation(hit=None, hit_id=None, content=None, delete_temp_file=False,
+                                  s3_resource=s3.resource(), mturk_client=client()):
     """
     Takes a value from the RequesterAnnotation field that was stored by the prepare_requester_annotation function
     and extracts the relevant payload from the text, compressed bytes, or S3.
-    :param hit: The HIT containing the RequesterAnnotation to retrieve
+    :param hit: The HIT object containing the RequesterAnnotation to retrieve
+    :param hit_id: The ID of the HIT to retrieve the RequesterAnnotation for
     :param content: The data stored in the RequesterAnnotation field
     :param delete_temp_file: True if you wish to delete the payload S3 object if one was created.
     :param s3_resource: The S3 resource to use when retrieving annotations if necessary
+    :param mturk_client: The MTurk client to use if you don't want to use the default client
     :return: The payload that was originally stored by prepare_requester_annotation
     """
+    if hit_id is not None:
+        hit = get_hit(hit_id, mturk_client=mturk_client)
     if hit is not None:
-        content = hit.get('RequesterAnnotation','')
+        content = hit.get('RequesterAnnotation', '')
     if len(content) > 0:
         try:
             content = json.loads(content)
@@ -544,3 +591,21 @@ def render_external_question(url, frame_height=0):
     return '''<ExternalQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2006-07-14/ExternalQuestion.xsd">
                 <ExternalURL>{}</ExternalURL><FrameHeight>{}</FrameHeight>
               </ExternalQuestion>'''.format(url, frame_height)
+
+
+def list_sns_events(event, event_filter=None):
+    for record in event['Records']:
+        message_id = record['Sns']['MessageId']
+        notification = json.loads(record['Sns']['Message'])
+        for mturk_event in notification['Events']:
+            if event_filter is None or mturk_event['EventType'] == event_filter:
+                yield mturk_event, message_id
+
+
+def list_sqs_events(event, event_filter=None):
+    for record in event['Records']:
+        message_id = record['MessageId']
+        notification = json.loads(record['body'])
+        for mturk_event in notification['Events']:
+            if event_filter is None or mturk_event['EventType'] == event_filter:
+                yield mturk_event, message_id
