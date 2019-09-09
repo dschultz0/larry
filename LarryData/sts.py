@@ -1,21 +1,10 @@
-import larrydata
+import LarryData.utils
 import boto3
 
 
 _client = None
 # A local instance of the boto3 session to use
-_session = None
-
-
-def session():
-    """
-    Retrieves the current boto3 session for this module
-    :return: Boto3 session
-    """
-    global _session
-    if _session is None:
-        _session = boto3.session.Session()
-    return _session
+_session = boto3.session.Session()
 
 
 def set_session(aws_access_key_id=None,
@@ -35,14 +24,14 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global _session, _client
-    _session=session if session is not None else boto3.session.Session(**larrydata.copy_non_null_keys(locals()))
+    _session = session if session is not None else boto3.session.Session(**LarryData.utils.copy_non_null_keys(locals()))
     _client = None
 
 
 def client():
-    global _client
+    global _client, _session
     if _client is None:
-        _client = session().client('sts')
+        _client = _session.client('sts')
     return _client
 
 

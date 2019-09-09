@@ -5,26 +5,15 @@ from boto3.s3.transfer import TransferConfig
 from io import StringIO, BytesIO
 import os
 import json
-import larrydata.sts as sts
+import LarryData.sts as sts
 import uuid
 import urllib.request
-import larrydata
+import LarryData.utils
 
 # Local S3 resource object
 _resource = None
 # A local instance of the boto3 session to use
-_session = None
-
-
-def session():
-    """
-    Retrieves the current boto3 session for this module
-    :return: Boto3 session
-    """
-    global _session
-    if _session is None:
-        _session = boto3.session.Session()
-    return _session
+_session = boto3.session.Session()
 
 
 def set_session(aws_access_key_id=None,
@@ -44,7 +33,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global _session, _resource
-    _session=session if session is not None else boto3.session.Session(**larrydata.copy_non_null_keys(locals()))
+    _session = session if session is not None else boto3.session.Session(**LarryData.utils.copy_non_null_keys(locals()))
     sts.set_session(session=_session)
     _resource = None
 
@@ -62,9 +51,9 @@ def resource():
     Helper function to retrieve an S3 resource
     :return: Boto3 S3 resource
     """
-    global _resource
+    global _resource, _session
     if _resource is None:
-        _resource = session().resource('s3')
+        _resource = _session.resource('s3')
     return _resource
 
 
@@ -614,7 +603,7 @@ def get_public_url(bucket=None, key=None, uri=None):
     return 'https://{}.s3.amazonaws.com/{}'.format(bucket, key)
 
 
-def create_bucket(bucket, acl='private', region=session().region_name, s3_resource=resource()):
+def create_bucket(bucket, acl='private', region=_session.region_name, s3_resource=resource()):
     bucket_obj = s3_resource.Bucket(bucket)
     bucket_obj.load()
     if bucket_obj.creation_date is None:
@@ -630,7 +619,7 @@ def delete_bucket(bucket, s3_resource=resource()):
 
 def _temp_bucket(region=None, s3_resource=resource(), bucket_identifier=None):
     """
-    Create a bucket that will be used as temp storage for larrydata commands.
+    Create a bucket that will be used as temp storage for LarryData commands.
     The bucket will be created in the region associated with the current session
     using a name based on the current session account id and region.
     :param region: Region to locate the temp bucket
@@ -640,9 +629,9 @@ def _temp_bucket(region=None, s3_resource=resource(), bucket_identifier=None):
     :return: The name of the created bucket
     """
     if region is None:
-        region = session().region_name
+        region = _session.region_name
     if bucket_identifier is None:
-        bucket_identifier=sts.account_id()
-    bucket = '{}-larrydata-{}'.format(bucket_identifier, region)
+        bucket_identifier = sts.account_id()
+    bucket = '{}-LarryData-{}'.format(bucket_identifier, region)
     create_bucket(bucket, region=region, s3_resource=s3_resource)
     return bucket

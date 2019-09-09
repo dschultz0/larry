@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 mkdir -p layer/python
-cp -R larrydata layer/python
+cp -R LarryData layer/python
 
 cd layer
 zip ../layer.zip -r ./python/

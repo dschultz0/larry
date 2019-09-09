@@ -1,10 +1,21 @@
-import json
-import larrydata
+import LarryData.s3
+import LarryData.mturk
+import LarryData.sqs
+import LarryData.sts
 import boto3
+import LarryData.utils
 
-_client = None
+
+def _propagate_session(_session):
+    LarryData.s3.set_session(session=_session)
+    LarryData.mturk.set_session(session=_session)
+    LarryData.sqs.set_session(session=_session)
+    LarryData.sts.set_session(session=_session)
+
+
 # A local instance of the boto3 session to use
-_session = None
+_session = boto3.session.Session()
+_propagate_session(_session)
 
 
 def session():
@@ -34,19 +45,7 @@ def set_session(aws_access_key_id=None,
     :param session: An existing session to use
     :return: None
     """
-    global _session, _client
-    _session = session if session is not None else boto3.session.Session(**larrydata.copy_non_null_keys(locals()))
-    _client = None
+    global _session
+    _session=session if session is not None else boto3.session.Session(**LarryData.utils.copy_non_null_keys(locals()))
+    _propagate_session(_session)
 
-
-def client():
-    global _client
-    if _client is None:
-        _client = session().client('sqs')
-    return _client
-
-
-def send_message(destination, message, sqs_client=client()):
-    if type(message) == dict:
-        message = json.dumps(message)
-    return sqs_client.send_message(QueueUrl=destination, MessageBody=message)
