@@ -632,6 +632,6 @@ def _temp_bucket(region=None, s3_resource=resource(), bucket_identifier=None):
         region = _session.region_name
     if bucket_identifier is None:
         bucket_identifier = sts.account_id()
-    bucket = '{}-LarryData-{}'.format(bucket_identifier, region)
+    bucket = '{}-larrydata-{}'.format(bucket_identifier, region)
     create_bucket(bucket, region=region, s3_resource=s3_resource)
     return bucket

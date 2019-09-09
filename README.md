@@ -13,9 +13,9 @@ when you need them.
 pip install LarryData
 ```
 In addition, you can easily add LarryData to your AWS Lambda functions by adding one of the following public Layers:
-* LarryData: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:17`
-* LarryData with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinja:17`
-* LarryData with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinjaPillow:17`
+* LarryData: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:18`
+* LarryData with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinja:18`
+* LarryData with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinjaPillow:18`
 
 
 ## Configuring your AWS session
@@ -56,8 +56,6 @@ my_dict2 = ld.s3.read_dict(uri='s3://mybucket/myfile.json')
 
 To write files to S3, simply call `write_object` to write your object out in the appropriate format:
 ```python
-import LarryData as ld
-
 # Write json to S3
 my_dict = {'key': 'val'}
 ld.s3.write_object(my_dict, bucket='mybucket', key='myfile.json')
