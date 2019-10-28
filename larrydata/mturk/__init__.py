@@ -4,8 +4,11 @@ import xml.etree.ElementTree as ET
 import json
 import zlib
 import base64
-import LarryData.s3 as s3
-import LarryData.utils
+import larrydata.s3 as s3
+import larrydata.utils
+import larrydata.utils.utils as utils
+from enum import Enum
+
 
 # Local client
 _client = None
@@ -32,7 +35,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global _session, _client
-    _session = session if session is not None else boto3.session.Session(**LarryData.utils.copy_non_null_keys(locals()))
+    _session = session if session is not None else boto3.session.Session(**larrydata.utils.copy_non_null_keys(locals()))
     s3.set_session(session=_session)
     _client = None
 
@@ -125,14 +128,14 @@ def set_environment(environment='prod', hit_id=None):
 def accept_qualification_request(request_id, value=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    params = LarryData.utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
+    params = larrydata.utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
     return mturk_client.accept_qualification_request(**params)
 
 
 def approve_assignment(assignment_id, feedback=None, override_rejection=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    params = LarryData.utils.map_parameters(locals(), {
+    params = larrydata.utils.map_parameters(locals(), {
         'assignment_id': 'AssignmentId',
         'feedback': 'RequesterFeedback',
         'override_rejection': 'OverrideRejection'
@@ -144,7 +147,7 @@ def associate_qualification_with_worker(qualification_type_id, worker_id, value=
                                         mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    params = LarryData.utils.map_parameters(locals(), {
+    params = larrydata.utils.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'value': 'IntegerValue',
@@ -156,7 +159,7 @@ def associate_qualification_with_worker(qualification_type_id, worker_id, value=
 def create_additional_assignments_for_hit(hit_id, additional_assignments, request_token, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    params = LarryData.utils.map_parameters(locals(), {
+    params = larrydata.utils.map_parameters(locals(), {
         'hit_id': 'HITId',
         'additional_assignments': 'NumberOfAdditionalAssignments',
         'request_token': 'UniqueRequestToken'
@@ -172,9 +175,10 @@ def add_assignments(hit_id, additional_assignments, request_token, mturk_client=
 
 def create_hit(title,
                description,
-               reward,
-               lifetime,
-               assignment_duration,
+               reward=None,
+               reward_cents=None,
+               lifetime=86400,
+               assignment_duration=3600,
                max_assignments=None,
                auto_approval_delay=None,
                keywords=None,
@@ -189,7 +193,7 @@ def create_hit(title,
                mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    params = LarryData.utils.map_parameters(locals(), {
+    params = larrydata.utils.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -207,6 +211,8 @@ def create_hit(title,
         'hit_layout_id': 'HITLayoutId',
         'hit_layout_parameters': 'HITLayoutParameters'
     })
+    if reward_cents:
+        params['reward'] = str(reward_cents/100)
     return mturk_client.create_hit(**params).get('HIT')
 
 
@@ -222,7 +228,7 @@ def create_hit_type(title,
                     mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    params = LarryData.utils.map_parameters(locals(), {
+    params = larrydata.utils.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -253,7 +259,7 @@ def get_assignment(assignment_id, mturk_client=None):
 def get_account_balance(mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
-    return mturk_client.get_account_balance()
+    return mturk_client.get_account_balance()['AvailableBalance']
 
 
 def get_hit(hit_id, mturk_client=None):
@@ -326,6 +332,49 @@ def list_hits(mturk_client=None):
             pages_to_get = False
         for hit in response.get('HITs', []):
             yield hit
+
+
+def create_qualification_type(name, description, keywords=None, status='Active', retry_delay=None, test=None, test_duration=None, answer_key=None, auto_granted=False, auto_granted_value=None, mturk_client=None):
+    if mturk_client is None:
+        mturk_client = client()
+    params = larrydata.utils.map_parameters(locals(), {
+        'name': 'Name',
+        'keywords': 'Keywords',
+        'description': 'Description',
+        'status': 'QualificationTypeStatus',
+        'retry_delay': 'RetryDelayInSeconds',
+        'test': 'Test',
+        'answer_key': 'AnswerKey',
+        'test_duration': 'TestDurationInSeconds',
+        'auto_granted': 'AutoGranted',
+        'auto_granted_value': 'AutoGrantedValue'
+    })
+    response = mturk_client.create_qualification_type(**params)
+    return response['QualificationType']['QualificationTypeId']
+
+
+def assign_qualification(qualification_type_id, worker_id, value=None, send_notification=False, mturk_client=None):
+    if mturk_client is None:
+        mturk_client = client()
+    params = larrydata.utils.map_parameters(locals(), {
+        'qualification_type_id': 'QualificationTypeId',
+        'worker_id': 'WorkerId',
+        'send_notification': 'SendNotification',
+    })
+    if value:
+        params['IntegerValue'] = value
+    return mturk_client.associate_qualification_with_worker(**params)
+
+
+def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_client=None):
+    if mturk_client is None:
+        mturk_client = client()
+    params = larrydata.utils.map_parameters(locals(), {
+        'qualification_type_id': 'QualificationTypeId',
+        'worker_id': 'WorkerId',
+        'reason': 'Reason'
+    })
+    return mturk_client.disassociate_qualification_from_worker(**params)
 
 
 def preview_url(hit_type_id, production=None):
@@ -413,79 +462,6 @@ def parse_answers(answer):
     return result
 
 
-def _extract_response_detail(assignments, identifier, exclude_rejected=True):
-    responses = []
-    response_count = 0
-    work_time = 0
-    for assignment in assignments:
-        responses.append({
-            'WorkerId': assignment['WorkerId'],
-            'Response': assignment['Answer'].get(identifier),
-            'AssignmentId': assignment['AssignmentId'],
-            'HITId': assignment['HITId'],
-            'AcceptTime': assignment['AcceptTime'],
-            'WorkTime': assignment['WorkTime'],
-            'Excluded': assignment['AssignmentStatus'] == 'Rejected'
-        })
-        if exclude_rejected is False or assignment['AssignmentStatus'] != 'Rejected':
-            response_count += 1
-            work_time += int(assignment['WorkTime'].total_seconds())
-    return {
-        'Responses': responses,
-        'ResponseCount': response_count,
-        'WorkTime': work_time,
-        'Identifier': identifier
-    }
-
-
-def _score_text_responses(response_detail):
-    scores = {}
-    for response in response_detail['Responses']:
-        value = response['Response']
-        score = scores.get(value, 0)
-        scores[value] = score + 1
-    return scores
-
-
-def _consolidate_text_response(assignments, identifier, threshold, exclude_rejected=True):
-    response_detail = _extract_response_detail(assignments, identifier, exclude_rejected=exclude_rejected)
-    response_detail['ScoredResponses'] = _score_text_responses(response_detail)
-    answer = None
-    for response, score in response_detail['ScoredResponses'].items():
-        if score * 100 / response_detail['ResponseCount'] >= threshold:
-            answer = response
-            break
-    if answer is not None:
-        for response in response_detail['Responses']:
-            response['Accuracy'] = response['Response'] == answer
-    return answer, response_detail
-
-
-def consolidate_crowd_classifier(hit_id, threshold=60, mturk_client=None, exclude_rejected=True):
-    """
-    Retrieves Worker responses for a HITId and computes a consolidated answer based on a simple plurality of responses.
-    For example, if the HIT has 3 Assignments, and Workers respond with responses of A, A, and B, the resulting
-    response would be A since 66.7% of Workers agree on a response of A which is higher than the default threshold of
-    60%. If the threshold were set at 80% than None would be returned. Similarly, if Workers responded with A, B, and C,
-    the result would be None since none of the answers received 60% of responses. By default, Assignments that have
-    already been rejected are ignored for purposes of scoring responses.
-    :param hit_id: The HITId to retrieve Assignments for
-    :param threshold: A 0-100 percentage value (80 = 80%) to use a a threshold in looking for agreement amongst Workers
-    :param mturk_client: The MTurk client to use if you don't want to use the default client
-    :param exclude_rejected: Boolean value (default=True) indicating that Assignments that have already been
-    rejected should be excluded
-    :return: A tuple containing the result and an object with detail on the responses for use in measuring Worker
-    accuracy
-    """
-    if mturk_client is None:
-        mturk_client = client()
-    return _consolidate_text_response(
-        list_assignments_for_hit(hit_id, mturk_client=mturk_client),
-        'category.label',
-        threshold,
-        exclude_rejected=exclude_rejected)
-
-
 def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_identifier=None):
     """
     Converts content into a format that can be inserted into the RequesterAnnotation field of a HIT when it is
@@ -494,7 +470,7 @@ def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_iden
     be retained as is. If it's too long, it will attempt to compress it using zlib. And if it's still too long it will
     be stored in a temporary file in S3.
 
-    Note that using this may result in creating a '*LarryData*' bucket in your S3 environment which will require
+    Note that using this may result in creating a '*larrydata*' bucket in your S3 environment which will require
     create-bucket permissions for your user. When retrieving the annotation you have the option to request that any
     temp files be deleted.
     :param payload: The content to be stored in the RequesterAnnotation field
@@ -634,3 +610,94 @@ def list_sqs_events(event, event_filter=None):
         for mturk_event in notification['Events']:
             if event_filter is None or mturk_event['EventType'] == event_filter:
                 yield mturk_event, message_id
+
+
+class QualificationComparitor(Enum):
+    LessThan = "LessThan"
+    LessThanOrEqualTo = "LessThanOrEqualTo"
+    GreaterThan = "GreaterThan"
+    GreaterThanOrEqualTo = "GreaterThanOrEqualTo"
+    EqualTo = "EqualTo"
+    NotEqualTo = "NotEqualTo"
+    Exists = "Exists"
+    DoesNotExist = "DoesNotExist"
+    In = "In"
+    NotIn = "NotIn"
+
+
+class QualificationActionsGuarded(Enum):
+    Accept = "Accept"
+    PreviewAndAccept = "PreviewAndAccept"
+    DiscoverPreviewAndAccept = "DiscoverPreviewAndAccept"
+
+
+def build_qualification_requirement(qualification_type_id, comparator, values=None, value=None,
+                                    locales=None, locale=None, actions_guarded=None):
+    if value:
+        values = [value]
+    if locale:
+        locales = [locale]
+    requirement = {
+        'QualificationTypeId': qualification_type_id,
+        'Comparator': comparator.value if isinstance(comparator, QualificationComparitor) else comparator,
+    }
+    if values:
+        requirement['IntegerValues'] = values
+    if locales:
+        _locales = []
+        for locale in locales:
+            if isinstance(locale, tuple):
+                _locales.append({'Country': locale[0], 'Subdivision': locale[1]})
+            else:
+                _locales.append({'Country': locale})
+        requirement['LocaleValues'] = _locales
+    if actions_guarded:
+        if isinstance(actions_guarded, QualificationActionsGuarded):
+            requirement['ActionsGuarded'] = actions_guarded.value
+        else:
+            requirement['ActionsGuarded'] = actions_guarded
+    return requirement
+
+
+def build_masters_requirement(actions_guarded=None):
+    if _production:
+        return build_qualification_requirement('2F1QJWKUDD8XADTFD2Q0G6UTO95ALH',
+                                               QualificationComparitor.Exists,
+                                               actions_guarded=actions_guarded)
+    else:
+        return build_qualification_requirement('2ARFPLSP75KLA8M8DH1HTEQVJT3SY6',
+                                               QualificationComparitor.Exists,
+                                               actions_guarded=actions_guarded)
+
+
+def build_adult_requirement(actions_guarded=None):
+    return build_qualification_requirement('00000000000000000060',
+                                           QualificationComparitor.EqualTo,
+                                           value=1,
+                                           actions_guarded=actions_guarded)
+
+
+def build_hits_approved_requirement(comparator, value, actions_guarded=None):
+    return build_qualification_requirement('00000000000000000040',
+                                           comparator,
+                                           value=value,
+                                           actions_guarded=actions_guarded)
+
+
+def build_percent_approved_requirement(comparator, value, actions_guarded=None):
+    return build_qualification_requirement('000000000000000000L0',
+                                           comparator,
+                                           value=value,
+                                           actions_guarded=actions_guarded)
+
+
+def build_locale_requirement(comparator, locales=None, locale=None, actions_guarded=None):
+    if locale:
+        locales = [locale]
+    if locales is None or len(locales) == 0:
+        raise Exception('A locale qualification requires at least one locale')
+    return build_qualification_requirement('00000000000000000071',
+                                           comparator=comparator,
+                                           locales=locales,
+                                           actions_guarded=actions_guarded)
+

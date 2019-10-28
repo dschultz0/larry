@@ -5,10 +5,13 @@ from boto3.s3.transfer import TransferConfig
 from io import StringIO, BytesIO
 import os
 import json
-import LarryData.sts as sts
+import larrydata.sts as sts
 import uuid
 import urllib.request
-import LarryData.utils
+import urllib.parse
+
+import larrydata.utils
+import larrydata.utils.utils as utils
 
 # Local S3 resource object
 _resource = None
@@ -33,7 +36,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global _session, _resource
-    _session = session if session is not None else boto3.session.Session(**LarryData.utils.copy_non_null_keys(locals()))
+    _session = session if session is not None else boto3.session.Session(**larrydata.utils.copy_non_null_keys(locals()))
     sts.set_session(session=_session)
     _resource = None
 
@@ -83,6 +86,20 @@ def get_object(bucket=None, key=None, uri=None, s3_resource=resource()):
     if uri:
         (bucket, key) = decompose_uri(uri)
     return s3_resource.Bucket(bucket).Object(key=key).get()
+
+
+def get_object_size(bucket=None, key=None, uri=None, s3_resource=resource()):
+    """
+    Returns the content_length of an S3 object.
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: Size in bytes
+    """
+    if uri:
+        (bucket, key) = decompose_uri(uri)
+    return s3_resource.Bucket(bucket).Object(key=key).content_length
 
 
 def read_object(bucket=None, key=None, uri=None, amt=None, s3_resource=resource()):
@@ -214,7 +231,7 @@ def write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, s3
     return compose_uri(bucket, key)
 
 
-def write_temp_object(value, prefix, acl=None, s3_resource=resource(), bucket_identifier=None, region=None):
+def write_temp_object(value, prefix, acl=None, s3_resource=resource(), bucket_identifier=None, region=None, bucket=None):
     """
     Write an object to a temp bucket with a unique UUID.
     :param value: Object to write to S3
@@ -224,14 +241,21 @@ def write_temp_object(value, prefix, acl=None, s3_resource=resource(), bucket_id
     :param bucket_identifier: The identifier to attach to the temp bucket that will be used for writing to s3, typically
     the account id (from STS) for the account being used
     :param region: The s3 region to store the data in
+    :param bucket: The bucket to use instead of creating/using a temp bucket
     :return: The URI of the object written to S3
     """
-    bucket = _temp_bucket(region=region, bucket_identifier=bucket_identifier, s3_resource=s3_resource)
+    if bucket is None:
+        bucket = get_temp_bucket(region=region, bucket_identifier=bucket_identifier, s3_resource=s3_resource)
     key = prefix + str(uuid.uuid4())
     return write_object(value, bucket=bucket, key=key, acl=acl, s3_resource=s3_resource)
 
 
-def write_object(value, bucket=None, key=None, uri=None, acl=None, newline='\n', s3_resource=resource()):
+def write_object(value, bucket=None, key=None,
+                 uri=None,
+                 acl=None,
+                 newline='\n',
+                 json_default=str,
+                 s3_resource=resource()):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -241,25 +265,33 @@ def write_object(value, bucket=None, key=None, uri=None, acl=None, newline='\n',
     :param uri: An s3:// path containing the bucket and key of the object
     :param acl: The canned ACL to apply to the object
     :param newline: Character(s) to use as a newline for list objects
+    :param json_default: default function for rendering data types
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
     if type(value) is dict:
-        return write(json.dumps(value), bucket, key, uri, acl, s3_resource=s3_resource)
+        return write(json.dumps(value, default=json_default), bucket, key, uri, acl, s3_resource=s3_resource)
     elif type(value) is str:
         return write(value, bucket, key, uri, acl, s3_resource=s3_resource)
     elif type(value) is list:
         buff = StringIO()
         for row in value:
             if type(row) is dict:
-                buff.write(json.dumps(row) + newline)
+                buff.write(json.dumps(row, default=json_default) + newline)
             else:
                 buff.write(str(row) + newline)
         return write(buff.getvalue(), bucket, key, uri, acl, s3_resource=s3_resource)
     elif value is None:
         return write('', bucket, key, uri, acl, s3_resource=s3_resource)
     else:
-        return write(value, bucket, key, uri, acl, s3_resource=s3_resource)
+        # try to write it as an image
+        try:
+            buff = BytesIO()
+            value.save(buff, 'PNG' if value.format is None else value.format)
+            buff.seek(0)
+            return write(buff, bucket, key, uri, s3_resource=s3_resource)
+        except Exception:
+            return write(value, bucket, key, uri, acl, s3_resource=s3_resource)
 
 
 def write_pillow_image(image, image_format, bucket=None, key=None, uri=None, s3_resource=resource()):
@@ -544,6 +576,13 @@ def download(directory, bucket=None, key=None, uri=None, use_threads=True, s3_re
     return s3_object_local
 
 
+def upload(file_name, bucket=None, key=None, uri=None, s3_resource=resource()):
+    if uri:
+        (bucket, key) = decompose_uri(uri)
+    s3_resource.Bucket(bucket).upload_file(file_name, key)
+    return compose_uri(bucket, key)
+
+
 def download_to_temp(bucket=None, key=None, uri=None, s3_resource=resource()):
     """
     Downloads the an S3 object to a temp directory on the local file system.
@@ -600,7 +639,7 @@ def get_public_url(bucket=None, key=None, uri=None):
     """
     if uri:
         (bucket, key) = decompose_uri(uri)
-    return 'https://{}.s3.amazonaws.com/{}'.format(bucket, key)
+    return 'https://{}.s3.amazonaws.com/{}'.format(bucket, urllib.parse.quote(key))
 
 
 def create_bucket(bucket, acl='private', region=_session.region_name, s3_resource=resource()):
@@ -617,9 +656,9 @@ def delete_bucket(bucket, s3_resource=resource()):
     bucket_obj.delete()
 
 
-def _temp_bucket(region=None, s3_resource=resource(), bucket_identifier=None):
+def get_temp_bucket(region=None, s3_resource=resource(), bucket_identifier=None):
     """
-    Create a bucket that will be used as temp storage for LarryData commands.
+    Create a bucket that will be used as temp storage for larrydata commands.
     The bucket will be created in the region associated with the current session
     using a name based on the current session account id and region.
     :param region: Region to locate the temp bucket

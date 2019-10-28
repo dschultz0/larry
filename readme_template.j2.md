@@ -10,7 +10,7 @@ when you need them.
 
 ## Installation
 ```
-pip install LarryData
+pip install larrydata
 ```
 In addition, you can easily add LarryData to your AWS Lambda functions by adding one of the following public Layers:
 * LarryData: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:{{ layer_version }}`
@@ -22,12 +22,12 @@ In addition, you can easily add LarryData to your AWS Lambda functions by adding
 By default LarryData creates a boto3 session using your default AWS credentials that can be configured using the 
 [AWS CLI](https://aws.amazon.com/cli/). To use a different profile, you can change using the following:
 ```python
-import LarryData as ld
+import larrydata as ld
 ld.set_session(profile_name='my_profile')
 ```
 Alternatively, you can pass AWS credentials directly
 ```python
-import LarryData as ld
+import larrydata as ld
 ld.set_session(aws_access_key_id='XXXXXXXXXX', aws_secret_access_key='XXXXXXXXXXXXX')
 ```
 
@@ -45,7 +45,7 @@ my_dict = json.loads(contents.decode('utf-8'))
 
 In contrast, LarryData takes care of all those steps for you and let's you simply call one function to get your data.
 ```python
-import LarryData as ld
+import larrydata as ld
 
 my_dict = ld.s3.read_dict(bucket='mybucket', key='myfile.json')
 ```
@@ -80,7 +80,7 @@ of their APIs. The MTurk module includes a number of features to make using MTur
 
 The combination of these features means that creating a HIT in MTurk is as easy as the following:
 ```python
-import LarryData as ld
+import larrydata as ld
 
 # Indicate we want to use the production environment
 ld.mturk.use_production()
@@ -104,7 +104,7 @@ print('HIT {} created, preview at {}'.format(hit_id, ld.mturk.preview_url(hit_ty
 ```
 Getting the results from that task is as simple as the following:
 ```python
-import LarryData as ld
+import larrydata as ld
 
 hit_id = 'HIT_ID_FROM_EARLIER'
 
