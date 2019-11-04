@@ -284,9 +284,12 @@ def write_object(value, bucket=None, key=None,
         'jpg': 'image/jpeg',
         'gif': 'image/gif',
         'jsonl': 'application/x-jsonlines',
-        'json': 'application/json'
+        'json': 'application/json',
+        'js': 'application/javascript',
+        'zip': 'application/zip',
+        'pdf': 'application/pdf',
+        'sql': 'application/sql'
     }
-
     if uri:
         (bucket, key) = decompose_uri(uri)
     extension = key.split('.')[-1]
