@@ -7,7 +7,7 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
     try:
         from PIL import Image
         if image:
-            src_bytes = _image_bytes(image)
+            src_bytes = _image_byte_count(image)
         else:
             src_bytes = s3.get_object_size(bucket, key, uri)
             image = s3.read_pillow_image(bucket, key, uri)
@@ -22,7 +22,7 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
             new_x = int(scalar * x)
             new_y = int(scalar * y)
             new_image, scalar = image.resize((new_x, new_y), Image.BICUBIC), scalar
-            if max_bytes and _image_bytes(new_image) > max_bytes:
+            if max_bytes and _image_byte_count(new_image) > max_bytes:
                 return scale_image_to_size(image=image, max_pixels=max_pixels, max_bytes=int(max_bytes*0.95))
             else:
                 return new_image, scalar
@@ -31,7 +31,7 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
         raise e
 
 
-def _image_bytes(image):
+def _image_byte_count(image):
     buff = BytesIO()
     image.save(buff, 'PNG' if image.format is None else image.format)
-    return len(buff)
+    return len(buff.getvalue())

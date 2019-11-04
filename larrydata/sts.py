@@ -1,5 +1,4 @@
 import larrydata.utils
-import larrydata.utils.utils as utils
 import boto3
 
 

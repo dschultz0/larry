@@ -4,13 +4,11 @@ import larrydata.sqs
 import larrydata.sts
 import larrydata.sagemaker
 import boto3
-
 import larrydata.utils
-import larrydata.utils.utils as utils
 
 
 def version():
-    return "0.2.18"
+    return "0.2.19"
 
 
 def _propagate_session(_session):

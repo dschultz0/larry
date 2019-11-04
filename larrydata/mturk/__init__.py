@@ -6,9 +6,7 @@ import zlib
 import base64
 import larrydata.s3 as s3
 import larrydata.utils
-import larrydata.utils.utils as utils
 from enum import Enum
-
 
 # Local client
 _client = None
@@ -132,6 +130,7 @@ def accept_qualification_request(request_id, value=None, mturk_client=None):
     return mturk_client.accept_qualification_request(**params)
 
 
+# TODO: Add methods for approving multiple assignments or all assignments for HIT(s)
 def approve_assignment(assignment_id, feedback=None, override_rejection=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
@@ -143,6 +142,7 @@ def approve_assignment(assignment_id, feedback=None, override_rejection=None, mt
     return mturk_client.approve_assignment(**params)
 
 
+# TODO: Add methods for multiple applications
 def associate_qualification_with_worker(qualification_type_id, worker_id, value=None, send_notification=None,
                                         mturk_client=None):
     if mturk_client is None:
@@ -212,7 +212,7 @@ def create_hit(title,
         'hit_layout_parameters': 'HITLayoutParameters'
     })
     if reward_cents:
-        params['reward'] = str(reward_cents/100)
+        params['reward'] = str(reward_cents / 100)
     return mturk_client.create_hit(**params).get('HIT')
 
 
@@ -242,6 +242,7 @@ def create_hit_type(title,
     return mturk_client.create_hit_type(**params)
 
 
+# TODO: Add methods for multiple applications
 def get_assignment(assignment_id, mturk_client=None):
     """
     Retrieves the Assignment and HIT data for a given AssignmentID. The Assignment data is updated to replace the
@@ -262,6 +263,7 @@ def get_account_balance(mturk_client=None):
     return mturk_client.get_account_balance()['AvailableBalance']
 
 
+# TODO: Add methods for multiple applications
 def get_hit(hit_id, mturk_client=None):
     """
     Retrieve HIT data for the id
@@ -334,7 +336,9 @@ def list_hits(mturk_client=None):
             yield hit
 
 
-def create_qualification_type(name, description, keywords=None, status='Active', retry_delay=None, test=None, test_duration=None, answer_key=None, auto_granted=False, auto_granted_value=None, mturk_client=None):
+def create_qualification_type(name, description, keywords=None, status='Active', retry_delay=None, test=None,
+                              test_duration=None, answer_key=None, auto_granted=False, auto_granted_value=None,
+                              mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
     params = larrydata.utils.map_parameters(locals(), {
@@ -353,6 +357,7 @@ def create_qualification_type(name, description, keywords=None, status='Active',
     return response['QualificationType']['QualificationTypeId']
 
 
+# TODO: Add methods for multiple applications
 def assign_qualification(qualification_type_id, worker_id, value=None, send_notification=False, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
@@ -366,6 +371,7 @@ def assign_qualification(qualification_type_id, worker_id, value=None, send_noti
     return mturk_client.associate_qualification_with_worker(**params)
 
 
+# TODO: Add methods for multiple applications
 def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
@@ -392,6 +398,7 @@ def preview_url(hit_type_id, production=None):
         return "https://workersandbox.mturk.com/mturk/preview?groupId={}".format(hit_type_id)
 
 
+# TODO: Create an enum for destination types
 def add_notification(hit_type_id, destination, event_types, mturk_client=None):
     """
     Attaches a notification to the HIT type to send a message when various event_types occur
@@ -700,4 +707,3 @@ def build_locale_requirement(comparator, locales=None, locale=None, actions_guar
                                            comparator=comparator,
                                            locales=locales,
                                            actions_guarded=actions_guarded)
-

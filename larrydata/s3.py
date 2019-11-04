@@ -9,9 +9,9 @@ import larrydata.sts as sts
 import uuid
 import urllib.request
 import urllib.parse
-
 import larrydata.utils
-import larrydata.utils.utils as utils
+from zipfile import ZipFile
+
 
 # Local S3 resource object
 _resource = None
@@ -255,6 +255,7 @@ def write_object(value, bucket=None, key=None,
                  acl=None,
                  newline='\n',
                  json_default=str,
+                 content_type=None,
                  s3_resource=resource()):
     """
     Write an object to the bucket/key pair (or uri), converting the python
@@ -266,32 +267,64 @@ def write_object(value, bucket=None, key=None,
     :param acl: The canned ACL to apply to the object
     :param newline: Character(s) to use as a newline for list objects
     :param json_default: default function for rendering data types
+    :param content_type: Content type to apply to the file, if not present a suggested type will be applied
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
+    extension_types = {
+        'css': 'text/css',
+        'html': 'text/html',
+        'xhtml': 'text/html',
+        'htm': 'text/html',
+        'xml': 'text/xml',
+        'csv': 'text/csv',
+        'txt': 'text/plain',
+        'png': 'image/png',
+        'jpeg': 'image/jpeg',
+        'jpg': 'image/jpeg',
+        'gif': 'image/gif',
+        'jsonl': 'application/x-jsonlines',
+        'json': 'application/json'
+    }
+
+    if uri:
+        (bucket, key) = decompose_uri(uri)
+    extension = key.split('.')[-1]
+    # JSON
     if type(value) is dict:
-        return write(json.dumps(value, default=json_default), bucket, key, uri, acl, s3_resource=s3_resource)
+        if content_type is None:
+            content_type = 'application/json'
+        return write(json.dumps(value, default=json_default), bucket, key, uri, acl, content_type=content_type,
+                     s3_resource=s3_resource)
+    # Text
     elif type(value) is str:
-        return write(value, bucket, key, uri, acl, s3_resource=s3_resource)
+        if content_type is None:
+            content_type = extension_types.get(extension, 'text/plain')
+        return write(value, bucket, key, uri, acl, content_type=content_type, s3_resource=s3_resource)
     elif type(value) is list:
+        if content_type is None:
+            content_type = extension_types.get(extension, 'text/plain')
         buff = StringIO()
         for row in value:
             if type(row) is dict:
                 buff.write(json.dumps(row, default=json_default) + newline)
             else:
                 buff.write(str(row) + newline)
-        return write(buff.getvalue(), bucket, key, uri, acl, s3_resource=s3_resource)
+        return write(buff.getvalue(), bucket, key, uri, acl, content_type=content_type, s3_resource=s3_resource)
     elif value is None:
-        return write('', bucket, key, uri, acl, s3_resource=s3_resource)
+        return write('', bucket, key, uri, acl, s3_resource=s3_resource, content_type=content_type)
     else:
         # try to write it as an image
         try:
             buff = BytesIO()
-            value.save(buff, 'PNG' if value.format is None else value.format)
+            format = 'PNG' if value.format is None else value.format
+            value.save(buff, format)
             buff.seek(0)
-            return write(buff, bucket, key, uri, s3_resource=s3_resource)
+            if content_type is None:
+                content_type = extension_types.get(extension, extension_types.get(format.lower(), 'text/plain'))
+            return write(buff, bucket, key, uri, content_type=content_type, s3_resource=s3_resource)
         except Exception:
-            return write(value, bucket, key, uri, acl, s3_resource=s3_resource)
+            return write(value, bucket, key, uri, acl, content_type=content_type, s3_resource=s3_resource)
 
 
 def write_pillow_image(image, image_format, bucket=None, key=None, uri=None, s3_resource=resource()):
@@ -674,3 +707,14 @@ def get_temp_bucket(region=None, s3_resource=resource(), bucket_identifier=None)
     bucket = '{}-larrydata-{}'.format(bucket_identifier, region)
     create_bucket(bucket, region=region, s3_resource=s3_resource)
     return bucket
+
+
+# TODO: add filter parameter
+# TODO: rationalize the list params
+def download_to_zip(file, bucket, prefix=None, prefixes=None):
+    if prefix:
+        prefixes = [prefix]
+    with ZipFile(file, 'w') as zfile:
+        for prefix in prefixes:
+            for key in list_objects(bucket, prefix):
+                zfile.writestr(urllib.parse.quote(key), data=read_object(bucket, key))
