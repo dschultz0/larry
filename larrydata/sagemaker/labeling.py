@@ -394,39 +394,6 @@ def _built_in_lambda(mode, region, task):
         raise Exception('Unrecognized region')
 
 
-def annotation_to_coordinates(box):
-    return box['left'], box['top'], box['left']+box['width']-1, box['top']+box['height']-1
-
-
-def file_name_portion(uri):
-    file = s3.decompose_uri(uri)[1].split('/')[-1]
-    return file[:file.rfind('.')]
-
-
-def draw_annotations(annotations, image, color='green', number_them=False, width=None, font_size=None):
-    # Change palette mode images to RGB so that standard palette colors can be drawn on them
-    if image.mode == 'P':
-        image = image.convert(mode='RGB')
-    else:
-        image = image.copy()
-    width = round(image.width / 512) + 1 if width is None else width
-    font_size = 20 if font_size is None else font_size
-    try:
-        from PIL import ImageDraw, ImageFont
-        draw = ImageDraw.Draw(image)
-        # TODO Find a better way to pull in fonts
-        font = ImageFont.truetype("/usr/share/fonts/dejavu/DejaVuSans.ttf", size=font_size)
-        for idx, item in enumerate(annotations):
-            box = item.get('coordinates', annotation_to_coordinates(item))
-            draw.rectangle(box, outline=color, width=width)
-            if number_them:
-                draw.text((item['left'] - 40, item['top'] + 4), str(idx), fill=color, font=font)
-        return image
-    except ImportError as e:
-        # Simply raise the ImportError to let the user know this requires Pillow to function
-        raise e
-
-
 def scale_oversized_images_in_manifest(manifest, bucket=None, key_prefix=None, uri_prefix=None):
     new_manifest = []
     for item in manifest:

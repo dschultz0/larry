@@ -156,7 +156,7 @@ def associate_qualification_with_worker(qualification_type_id, worker_id, value=
     return mturk_client.associate_qualification_with_worker(**params)
 
 
-def create_additional_assignments_for_hit(hit_id, additional_assignments, request_token, mturk_client=None):
+def create_additional_assignments_for_hit(hit_id, additional_assignments, request_token=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
     params = larrydata.utils.map_parameters(locals(), {
@@ -167,7 +167,7 @@ def create_additional_assignments_for_hit(hit_id, additional_assignments, reques
     return mturk_client.create_additional_assignments_for_hit(**params)
 
 
-def add_assignments(hit_id, additional_assignments, request_token, mturk_client=None):
+def add_assignments(hit_id, additional_assignments, request_token=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client()
     return create_additional_assignments_for_hit(hit_id, additional_assignments, request_token, mturk_client)
@@ -449,23 +449,44 @@ def parse_answers(answer):
     ns = {'mt': 'http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionFormAnswers.xsd'}
     root = ET.fromstring(answer)
 
+    answers = root.findall('mt:Answer', ns)
+
     # TODO: Need to test this for the various types
-    for a in root.findall('mt:Answer', ns):
-        name = a.find('mt:QuestionIdentifier', ns).text
-        if a.find('mt:FreeText', ns) is not None:
-            answer_text = a.find('mt:FreeText', ns).text
-            try:
-                result[name] = json.loads(answer_text)
-            except json.decoder.JSONDecodeError:
-                result[name] = answer_text
+    # if this is coming from the crowd-form element load the JSON
+    if len(answers) == 1 and answers[0].find('mt:QuestionIdentifier', ns).text == 'taskAnswers':
+        answer_body = json.loads(answers[0].find('mt:FreeText', ns).text)
+
+        # For some reason crowd form creates what appears to be an unnecessary list, in those cases we flatten it
+        if isinstance(answer_body, list) and len(answer_body) == 1:
+            answer_body = answer_body[0]
+            for key, value in answer_body.items():
+                if isinstance(value, str):
+                    try:
+                        result[key] = json.loads(value)
+                    except json.decoder.JSONDecodeError:
+                        result[key] = value
+                else:
+                    result[key] = value
         else:
-            selection_elements = a.findall('mt:SelectionIdentifier')
-            selections = []
-            for selection in selection_elements:
-                selections.append(selection.text)
-            if a.find('mt:OtherSelection'):
-                selections.append(a.find('mt:OtherSelection').text)
-            result[name] = selections
+            result['taskAnswers'] = answer_body
+    # else this is a standard element and each value should be loaded
+    else:
+        for a in answers:
+            name = a.find('mt:QuestionIdentifier', ns).text
+            if a.find('mt:FreeText', ns) is not None:
+                answer_text = a.find('mt:FreeText', ns).text
+                try:
+                    result[name] = json.loads(answer_text)
+                except json.decoder.JSONDecodeError:
+                    result[name] = answer_text
+            else:
+                selection_elements = a.findall('mt:SelectionIdentifier')
+                selections = []
+                for selection in selection_elements:
+                    selections.append(selection.text)
+                if a.find('mt:OtherSelection'):
+                    selections.append(a.find('mt:OtherSelection').text)
+                result[name] = selections
     return result
 
 
@@ -707,3 +728,22 @@ def build_locale_requirement(comparator, locales=None, locale=None, actions_guar
                                            comparator=comparator,
                                            locales=locales,
                                            actions_guarded=actions_guarded)
+
+
+# MTurk utility functions
+def retrieve_hit_results_to_dict(items, hit_id_attribute='HITId', assignments_attribute='Assignments'):
+    stats = {}
+    for item in items:
+        if hit_id_attribute in item:
+            hit_id = item[hit_id_attribute]
+            hit = get_hit(hit_id)
+            status = hit['HITStatus']
+            item['HITStatus'] = status
+            stats[status] = stats.get(status, 0) + 1
+            item[assignments_attribute] = list(list_assignments_for_hit(hit_id))
+            completed = len(item[assignments_attribute])
+            stats['CompletedAssignments'] = stats.get('CompletedAssignments', 0) + completed
+            stats['MaxAssignments'] = stats.get('MaxAssignments', 0) + hit['MaxAssignments']
+            if completed < hit['MaxAssignments'] and status == 'Reviewable':
+                stats['ExpiredAssignments'] = stats.get('ExpiredAssignments', 0) - completed + hit['MaxAssignments']
+    return stats

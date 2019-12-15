@@ -721,3 +721,9 @@ def download_to_zip(file, bucket, prefix=None, prefixes=None):
         for prefix in prefixes:
             for key in list_objects(bucket, prefix):
                 zfile.writestr(urllib.parse.quote(key), data=read_object(bucket, key))
+
+
+def file_name_portion(uri):
+    file = decompose_uri(uri)[1].split('/')[-1]
+    return file[:file.rfind('.')]
+
