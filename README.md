@@ -13,9 +13,9 @@ when you need them.
 pip install larrydata
 ```
 In addition, you can easily add LarryData to your AWS Lambda functions by adding one of the following public Layers:
-* LarryData: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:1`
-* LarryData with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinja:1`
-* LarryData with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinjaPillow:1`
+* LarryData: `arn:aws:lambda:us-west-2:981332165467:layer:LarryData:2`
+* LarryData with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinja:2`
+* LarryData with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryDataWithJinjaPillow:2`
 
 
 ## Configuring your AWS session

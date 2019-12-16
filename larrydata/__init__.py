@@ -8,7 +8,7 @@ import larrydata.utils
 
 
 def version():
-    return "0.2.19"
+    return "0.2.20"
 
 
 def _propagate_session(_session):
