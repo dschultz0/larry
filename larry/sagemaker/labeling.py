@@ -1,43 +1,36 @@
 import json
-import larrydata.s3 as s3
-import larrydata.utils
+import larry.s3 as s3
+import larry.utils
 import boto3
 import os
 from botocore.exceptions import ClientError
-from larrydata.utils.image import scale_image_to_size
+from larry.utils.image import scale_image_to_size
 
 
-_client = None
+client = None
 # A local instance of the boto3 session to use
-_session = boto3.session.Session()
+__session = boto3.session.Session()
 
 
 def set_session(aws_access_key_id=None,
                 aws_secret_access_key=None,
-                aws_session_token=None,
+                aws__session_token=None,
                 region_name=None,
                 profile_name=None,
-                session=None):
+                boto_session=None):
     """
     Sets the boto3 session for this module to use a specified configuration state.
     :param aws_access_key_id: AWS access key ID
     :param aws_secret_access_key: AWS secret access key
-    :param aws_session_token: AWS temporary session token
+    :param aws__session_token: AWS temporary session token
     :param region_name: Default region when creating new connections
     :param profile_name: The name of a profile to use
-    :param session: An existing session to use
+    :param boto_session: An existing session to use
     :return: None
     """
-    global _session, _client
-    _session = session if session is not None else boto3.session.Session(**larrydata.utils.copy_non_null_keys(locals()))
-    _client = None
-
-
-def client():
-    global _client, _session
-    if _client is None:
-        _client = _session.client('sagemaker')
-    return _client
+    global __session, client
+    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
+    __client = __session.client('sagemaker')
 
 
 def build_pre_response(event, log_details=True, input_attribute='taskObject'):
@@ -160,7 +153,7 @@ def _output_config(output_uri, kms_key=None):
 def build_human_task_config(template_uri, pre_lambda_arn, consolidation_lambda_arn, title, description, workers=1,
                             public=False, reward_in_cents=None, workteam_arn=None, time_limit=300, lifetime=345600,
                             max_concurrent_tasks=None, keywords=None, region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     config = {
         'UiConfig': {
             'UiTemplateS3Uri': template_uri
@@ -234,7 +227,8 @@ def create_job(name,
                free_of_adult_content=True,
                algorithms_config=None,
                stopping_conditions=None,
-               sagemaker_client=client()):
+               sagemaker_client=None):
+    sagemaker_client = sagemaker_client if sagemaker_client else client
     if label_attribute_name is None:
         label_attribute_name = name
     params = {
@@ -254,11 +248,13 @@ def create_job(name,
     return sagemaker_client.create_labeling_job(**params)
 
 
-def describe_job(name, sagemaker_client=client()):
+def describe_job(name, sagemaker_client=None):
+    sagemaker_client = sagemaker_client if sagemaker_client else client
     return sagemaker_client.describe_labeling_job(LabelingJobName=name)
 
 
-def get_job_state(name, sagemaker_client=client()):
+def get_job_state(name, sagemaker_client=None):
+    sagemaker_client = sagemaker_client if sagemaker_client else client
     response = describe_job(name, sagemaker_client)
     status = response['LabelingJobStatus']
     labeled = response['LabelCounters']['TotalLabeled']
@@ -315,60 +311,60 @@ def find_failures(manifest, attribute_name):
         failure_reason = item[attribute_name+'-metadata'].get('failure-reason')
         if failure_reason:
             failures.append(item)
-            failure_reason = failure_reason.replace(item['source-ref'],'<file>')
-            failure_reason = failure_reason.replace(item['source-ref'].replace('/','\\/'),'<file>')
+            failure_reason = failure_reason.replace(item['source-ref'], '<file>')
+            failure_reason = failure_reason.replace(item['source-ref'].replace('/', '\\/'), '<file>')
             cnt = reasons.get(failure_reason,0)
             reasons[failure_reason] = cnt + 1
     return failures, reasons
 
 
 def built_in_pre_lambda_bounding_box(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('PRE', region, 'BoundingBox')
 
 
 def built_in_pre_lambda_image_multi_class(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('PRE', region, 'ImageMultiClass')
 
 
 def built_in_pre_lambda_semantic_segmentation(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('PRE', region, 'SemanticSegmentation')
 
 
 def built_in_pre_lambda_text_multi_class(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('PRE', region, 'TextMultiClass')
 
 
 def built_in_pre_lambda_named_entity_recognition(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('PRE', region, 'NamedEntityRecognition')
 
 
 def built_in_acs_lambda_bounding_box(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('ACS', region, 'BoundingBox')
 
 
 def built_in_acs_lambda_image_multi_class(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('ACS', region, 'ImageMultiClass')
 
 
 def built_in_acs_lambda_semantic_segmentation(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('ACS', region, 'SemanticSegmentation')
 
 
 def built_in_acs_lambda_text_multi_class(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('ACS', region, 'TextMultiClass')
 
 
 def built_in_acs_lambda_named_entity_recognition(region=None):
-    region = _session.region_name if region is None else region
+    region = __session.region_name if region is None else region
     return _built_in_lambda('ACS', region, 'NamedEntityRecognition')
 
 

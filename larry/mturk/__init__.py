@@ -4,61 +4,57 @@ import xml.etree.ElementTree as ET
 import json
 import zlib
 import base64
-import larrydata.s3 as s3
-import larrydata.utils
+import larry.s3 as s3
+import larry.utils
 from enum import Enum
+from collections.abc import Iterable
+from larry.mturk.HIT import HIT
+from larry.mturk.Assignment import Assignment
+
 
 # Local client
-_client = None
+client = None
 # Indicate if we are working in production or sandbox
-_production = True
+__production = True
 # A local instance of the boto3 session to use
-_session = boto3.session.Session()
+__session = boto3.session.Session()
+
+PRODUCTION = 'production'
+SANDBOX = 'sandbox'
 
 
-def set_session(aws_access_key_id=None,
-                aws_secret_access_key=None,
-                aws_session_token=None,
-                region_name=None,
-                profile_name=None,
-                session=None):
+def set_session(aws_access_key_id=None, aws_secret_access_key=None, aws__session_token=None,
+                region_name=None, profile_name=None, boto_session=None):
     """
     Sets the boto3 session for this module to use a specified configuration state.
     :param aws_access_key_id: AWS access key ID
     :param aws_secret_access_key: AWS secret access key
-    :param aws_session_token: AWS temporary session token
+    :param aws__session_token: AWS temporary session token
     :param region_name: Default region when creating new connections
     :param profile_name: The name of a profile to use
-    :param session: An existing session to use
+    :param boto_session: An existing session to use
     :return: None
     """
-    global _session, _client
-    _session = session if session is not None else boto3.session.Session(**larrydata.utils.copy_non_null_keys(locals()))
-    s3.set_session(session=_session)
-    _client = None
+    global __session, client
+    __session = boto_session if boto_session else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
+    s3.set_session(boto_session=__session)
+    __create_client()
 
 
-def client():
+def __create_client():
     """
-    Helper function to retrieve an MTurk client. The client will use the current environment in use by the library,
+    Helper function to build an MTurk client. The client will use the current environment in use by the library,
     production or sandbox.
-    :return: boto3 MTurk client
     """
-    global _client, _production, _session
-    if _client is None:
-        if _production:
-            _client = _session.client(
-                service_name='mturk',
-                region_name='us-east-1',
-                endpoint_url="https://mturk-requester.us-east-1.amazonaws.com"
-            )
-        else:
-            _client = _session.client(
-                service_name='mturk',
-                region_name='us-east-1',
-                endpoint_url="https://mturk-requester-sandbox.us-east-1.amazonaws.com"
-            )
-    return _client
+    global client, __production, __session
+    endpoint = "https://mturk-requester.us-east-1.amazonaws.com" if __production \
+        else "https://mturk-requester-sandbox.us-east-1.amazonaws.com"
+    client = __session.client(
+        service_name='mturk',
+        region_name='us-east-1',
+        endpoint_url=endpoint
+    )
+    client.production = __production
 
 
 def use_production():
@@ -66,9 +62,9 @@ def use_production():
     Indicate that the library should use the production MTurk environment.
     :return: None
     """
-    global _production, _client
-    _production = True
-    _client = None
+    global __production, client
+    __production = True
+    __create_client()
 
 
 def use_sandbox():
@@ -76,101 +72,141 @@ def use_sandbox():
     Indicate that the library should use the sandbox MTurk environment.
     :return: None
     """
-    global _production, _client
-    _production = False
-    _client = None
+    global __production, client
+    __production = False
+    __create_client()
+
+
+def set_environment(environment=PRODUCTION, hit_id=None):
+    """
+    Set the environment that the library should use. If a HITId is provided, this will attempt to find
+    the HIT in either environment and set the environment where that HITId is present.
+    :param environment: The MTurk environment that the library should use (production or sandbox)
+    :param hit_id: If provided, set the environment based on where the hit_id is present
+    :return: If a hit_id is provided then the HIT response is returned, else None
+    """
+    def _try_get_hit(_hit_id):
+        try:
+            return get_hit(_hit_id)
+        except ClientError as e:
+            return e
+
+    global client, __production, __session
+    if hit_id:
+        existing_production = __production
+
+        # Try prod first
+        if not __production:
+            __production = True
+            __create_client()
+        hit = _try_get_hit(hit_id)
+        if isinstance(hit, HIT):
+            return hit
+        else:
+            __production = False
+            __create_client()
+            sandbox_hit = _try_get_hit(hit_id)
+            if isinstance(sandbox_hit, HIT):
+                return sandbox_hit
+            else:
+                __production = existing_production
+                raise hit
+
+    elif environment.lower() == SANDBOX:
+        __production = False
+        __create_client()
+    else:
+        __production = True
+        __create_client()
+
+
+def mturk_client_environment(c):
+    if hasattr(c, 'production'):
+        return c.production
+    else:
+        return c._endpoint.host == 'https://mturk-requester.us-east-1.amazonaws.com'
+
+
+def production():
+    return __production
+
+
+def sandbox():
+    return not __production
 
 
 def environment():
-    return 'production' if _production else 'sandbox'
+    return PRODUCTION if __production else SANDBOX
 
 
-def set_environment(environment='prod', hit_id=None):
-    """
-    Set the environment that the library should use.
-    :param environment: The MTurk environment that the library should use (production or sandbox)
-    :param hit_id: If provided, set the environment based on where the hit_id is present
-    :return: If a hit_id is provided the HIT response is returned, else None
-    """
-    global _client, _production, _session
-    if hit_id:
-        mturk = _session.client(
-            service_name='mturk',
-            region_name='us-east-1',
-            endpoint_url="https://mturk-requester.us-east-1.amazonaws.com"
-        )
-        try:
-            response = mturk.get_hit(HITId=hit_id)
-            _production = True
-            _client = mturk
-            return response.get('HIT')
-        except ClientError:
-            mturk = _session.client(
-                service_name='mturk',
-                region_name='us-east-1',
-                endpoint_url="https://mturk-requester-sandbox.us-east-1.amazonaws.com"
-            )
-            response = mturk.get_hit(HITId=hit_id)
-            _production = False
-            _client = mturk
-            return response.get('HIT')
-
-    elif environment.lower() == 'sandbox':
-        _production = False
-        _client = None
-    else:
-        _production = True
-        _client = None
-
-
+# TODO Review how someone would use this to see if supporting iterables or other object types makes sense
 def accept_qualification_request(request_id, value=None, mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
-    return mturk_client.accept_qualification_request(**params)
+    mturk_client = mturk_client if mturk_client else client
+    params = larry.utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
+    mturk_client.accept_qualification_request(**params)
 
 
-# TODO: Add methods for approving multiple assignments or all assignments for HIT(s)
-def approve_assignment(assignment_id, feedback=None, override_rejection=None, mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
-        'assignment_id': 'AssignmentId',
-        'feedback': 'RequesterFeedback',
-        'override_rejection': 'OverrideRejection'
-    })
-    return mturk_client.approve_assignment(**params)
+def approve(assignment, feedback=None, override_rejection=None, mturk_client=None):
+    def _approve_assignment(_assignment_id, _feedback, _override_rejection):
+        params = larry.utils.map_parameters(locals(), {
+            '_assignment_id': 'AssignmentId',
+            '_feedback': 'RequesterFeedback',
+            '_override_rejection': 'OverrideRejection'
+        })
+        mturk_client.approve_assignment(**params)
+
+    mturk_client = mturk_client if mturk_client else client
+    if isinstance(assignment, str):
+        _approve_assignment(assignment, feedback, override_rejection)
+    elif hasattr(assignment, 'AssignmentId'):
+        _approve_assignment(assignment['AssignmentId'], feedback, override_rejection)
+    else:
+        if isinstance(feedback, Iterable):
+            for assignment_obj, fbk in zip(assignment, feedback):
+                approve(assignment_obj, fbk, override_rejection, mturk_client)
+        else:
+            for assigment_obj in assignment:
+                approve(assigment_obj, feedback, override_rejection, mturk_client)
 
 
-# TODO: Add methods for multiple applications
-def associate_qualification_with_worker(qualification_type_id, worker_id, value=None, send_notification=None,
-                                        mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
-        'qualification_type_id': 'QualificationTypeId',
-        'worker_id': 'WorkerId',
-        'value': 'IntegerValue',
-        'send_notification': 'SendNotification'
-    })
-    return mturk_client.associate_qualification_with_worker(**params)
+approve_assignment = approve
 
 
-def create_additional_assignments_for_hit(hit_id, additional_assignments, request_token=None, mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
+def assign_qualification(qualification, worker_id, value=None, send_notification=None, mturk_client=None):
+    mturk_client = mturk_client if mturk_client else client
+    qualification_type_id = qualification['QualificationTypeId'] if hasattr(qualification,
+                                                                            'QualificationTypeId') else qualification
+
+    if isinstance(worker_id, Iterable):
+        if isinstance(value, Iterable):
+            for worker, val in zip(worker_id, value):
+                assign_qualification(qualification_type_id, worker, val, send_notification, mturk_client)
+        else:
+            for worker in worker_id:
+                assign_qualification(qualification_type_id, worker, value, send_notification, mturk_client)
+    else:
+        params = larry.utils.map_parameters(locals(), {
+            'worker_id': 'WorkerId',
+            'value': 'IntegerValue',
+            'send_notification': 'SendNotification'
+        })
+        mturk_client.associate_qualification_with_worker(QualificationTypeId=qualification_type_id, **params)
+
+
+associate_qualification_with_worker = assign_qualification
+
+
+def add_assignments(hit_id, additional_assignments, request_token=None, mturk_client=None):
+    mturk_client = mturk_client if mturk_client else client
+    params = larry.utils.map_parameters(locals(), {
         'hit_id': 'HITId',
         'additional_assignments': 'NumberOfAdditionalAssignments',
         'request_token': 'UniqueRequestToken'
     })
-    return mturk_client.create_additional_assignments_for_hit(**params)
+    mturk_client.create_additional_assignments_for_hit(**params)
 
 
-def add_assignments(hit_id, additional_assignments, request_token=None, mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    return create_additional_assignments_for_hit(hit_id, additional_assignments, request_token, mturk_client)
+create_additional_assignments_for_hit = add_assignments
 
 
 def create_hit(title,
@@ -191,9 +227,8 @@ def create_hit(title,
                hit_layout_id=None,
                hit_layout_parameters=None,
                mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
+    mturk_client = mturk_client if mturk_client else client
+    params = larry.utils.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -226,9 +261,8 @@ def create_hit_type(title,
                     keywords=None,
                     qualification_requirements=None,
                     mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
+    mturk_client = mturk_client if mturk_client else client
+    params = larry.utils.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -239,10 +273,22 @@ def create_hit_type(title,
         'keywords': 'Keywords',
         'qualification_requirements': 'QualificationRequirements'
     })
-    return mturk_client.create_hit_type(**params)
+    return mturk_client.create_hit_type(**params).get('HITTypeId')
 
 
-# TODO: Add methods for multiple applications
+def _get_assignment(assignment_id, mturk_client=None):
+    """
+    Retrieves the Assignment and HIT data for a given AssignmentID. The Assignment data is updated to replace the
+    Answer XML with a dict object.
+    :param assignment_id: The assignment to retrieve
+    :param mturk_client: The MTurk client to use for this request instead of the default client
+    :return: A tuple of assignment and hit dicts
+    """
+    mturk_client = mturk_client if mturk_client else client
+    response = mturk_client.get_assignment(AssignmentId=assignment_id)
+    return response['Assignment'], response['HIT']
+
+
 def get_assignment(assignment_id, mturk_client=None):
     """
     Retrieves the Assignment and HIT data for a given AssignmentID. The Assignment data is updated to replace the
@@ -251,19 +297,20 @@ def get_assignment(assignment_id, mturk_client=None):
     :param mturk_client: The MTurk client to use for this request instead of the default client
     :return: A tuple of assignment and hit dicts
     """
-    if mturk_client is None:
-        mturk_client = client()
-    response = mturk_client.get_assignment(AssignmentId=assignment_id)
-    return resolve_assignment_answer(response['Assignment']), response['HIT']
+    a, h = _get_assignment(assignment_id, mturk_client)
+    return Assignment(a), HIT(h)
 
 
 def get_account_balance(mturk_client=None):
-    if mturk_client is None:
-        mturk_client = client()
-    return mturk_client.get_account_balance()['AvailableBalance']
+    mturk_client = mturk_client if mturk_client else client
+    return float(mturk_client.get_account_balance()['AvailableBalance'])
 
 
-# TODO: Add methods for multiple applications
+def _get_hit(hit_id, mturk_client=None):
+    mturk_client = mturk_client if mturk_client else client
+    return mturk_client.get_hit(HITId=hit_id)['HIT'], mturk_client_environment(mturk_client)
+
+
 def get_hit(hit_id, mturk_client=None):
     """
     Retrieve HIT data for the id
@@ -271,10 +318,8 @@ def get_hit(hit_id, mturk_client=None):
     :param mturk_client: The MTurk client to use for this request instead of the default client
     :return: A dict containing HIT attributes
     """
-    # TODO: add error handling when hit not found
-    if mturk_client is None:
-        mturk_client = client()
-    return mturk_client.get_hit(HITId=hit_id)['HIT']
+    hit, prod = _get_hit(hit_id, mturk_client)
+    return HIT(hit, production=prod)
 
 
 def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=True, mturk_client=None):
@@ -288,7 +333,7 @@ def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=Tru
     :return: A generator containing the assignments
     """
     if mturk_client is None:
-        mturk_client = client()
+        mturk_client = client
     statuses = []
     if submitted:
         statuses.append('Submitted')
@@ -309,7 +354,7 @@ def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=Tru
         else:
             pages_to_get = False
         for assignment in response.get('Assignments', []):
-            yield resolve_assignment_answer(assignment)
+            yield Assignment(assignment)
 
 
 def list_hits(mturk_client=None):
@@ -320,7 +365,7 @@ def list_hits(mturk_client=None):
     :return: A generator containing the HITs
     """
     if mturk_client is None:
-        mturk_client = client()
+        mturk_client = client
     pages_to_get = True
     next_token = None
     while pages_to_get:
@@ -333,15 +378,15 @@ def list_hits(mturk_client=None):
         else:
             pages_to_get = False
         for hit in response.get('HITs', []):
-            yield hit
+            yield HIT(hit)
 
 
 def create_qualification_type(name, description, keywords=None, status='Active', retry_delay=None, test=None,
                               test_duration=None, answer_key=None, auto_granted=False, auto_granted_value=None,
                               mturk_client=None):
     if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
+        mturk_client = client
+    params = larry.utils.map_parameters(locals(), {
         'name': 'Name',
         'keywords': 'Keywords',
         'description': 'Description',
@@ -360,8 +405,8 @@ def create_qualification_type(name, description, keywords=None, status='Active',
 # TODO: Add methods for multiple applications
 def assign_qualification(qualification_type_id, worker_id, value=None, send_notification=False, mturk_client=None):
     if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
+        mturk_client = client
+    params = larry.utils.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'send_notification': 'SendNotification',
@@ -374,8 +419,8 @@ def assign_qualification(qualification_type_id, worker_id, value=None, send_noti
 # TODO: Add methods for multiple applications
 def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_client=None):
     if mturk_client is None:
-        mturk_client = client()
-    params = larrydata.utils.map_parameters(locals(), {
+        mturk_client = client
+    params = larry.utils.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'reason': 'Reason'
@@ -390,8 +435,8 @@ def preview_url(hit_type_id, production=None):
     :param production: True if the request is for the production environment
     :return: The preview URL
     """
-    global _production
-    prod = _production if production is None else production
+    global __production
+    prod = __production if __production is None else __production
     if prod:
         return "https://worker.mturk.com/mturk/preview?groupId={}".format(hit_type_id)
     else:
@@ -411,7 +456,7 @@ def add_notification(hit_type_id, destination, event_types, mturk_client=None):
     :return: The API response
     """
     if mturk_client is None:
-        mturk_client = client()
+        mturk_client = client
     return mturk_client.update_notification_settings(
         HITTypeId=hit_type_id,
         Notification={
@@ -422,20 +467,6 @@ def add_notification(hit_type_id, destination, event_types, mturk_client=None):
         },
         Active=True
     )
-
-
-def resolve_assignment_answer(assignment):
-    """
-    Parses a QuestionFormAnswers object within an assignment and returns a copy of the assignment dict with the
-    answer XML replaced with a dict.
-    :param assignment: An MTurk Assignment object
-    :return: An MTurk Assignment object with the Answer XML replaced by a dict containing the Worker answer
-    """
-    result = assignment.copy()
-    result['Answer'] = parse_answers(assignment['Answer'])
-    if 'AcceptTime' in result and 'SubmitTime' in result:
-        result['WorkTime'] = result['SubmitTime'] - result['AcceptTime']
-    return result
 
 
 def parse_answers(answer):
@@ -490,7 +521,7 @@ def parse_answers(answer):
     return result
 
 
-def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_identifier=None):
+def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=None):
     """
     Converts content into a format that can be inserted into the RequesterAnnotation field of a HIT when it is
     created. Because the RequesterAnnotation field is limited to 255 characters this will automatically format it
@@ -498,7 +529,7 @@ def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_iden
     be retained as is. If it's too long, it will attempt to compress it using zlib. And if it's still too long it will
     be stored in a temporary file in S3.
 
-    Note that using this may result in creating a '*larrydata*' bucket in your S3 environment which will require
+    Note that using this may result in creating a '*larry*' bucket in your S3 environment which will require
     create-bucket permissions for your user. When retrieving the annotation you have the option to request that any
     temp files be deleted.
     :param payload: The content to be stored in the RequesterAnnotation field
@@ -507,7 +538,7 @@ def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_iden
     the account id (from STS) for the account being used
     :return: A string value that can be placed in the RequesterAnnotation field
     """
-
+    s3_resource = s3_resource if s3_resource else s3.resource
     payload_string = json.dumps(payload, separators=(',', ':')) if type(payload) == dict else payload
 
     # Use the annotation 'as is' if possible
@@ -527,28 +558,25 @@ def prepare_requester_annotation(payload, s3_resource=s3.resource(), bucket_iden
             return json.dumps({'payloadURI': uri}, separators=(',', ':'))
 
 
-def retrieve_requester_annotation(hit=None, hit_id=None, content=None, delete_temp_file=False,
-                                  s3_resource=s3.resource(), mturk_client=None):
+def retrieve_requester_annotation(hit_id, delete_temp_file=False, s3_resource=None, mturk_client=None):
     """
     Takes a value from the RequesterAnnotation field that was stored by the prepare_requester_annotation function
     and extracts the relevant payload from the text, compressed bytes, or S3.
-    :param hit: The HIT object containing the RequesterAnnotation to retrieve
     :param hit_id: The ID of the HIT to retrieve the RequesterAnnotation for
-    :param content: The data stored in the RequesterAnnotation field
     :param delete_temp_file: True if you wish to delete the payload S3 object if one was created.
     :param s3_resource: The S3 resource to use when retrieving annotations if necessary
     :param mturk_client: The MTurk client to use if you don't want to use the default client
     :return: The payload that was originally stored by prepare_requester_annotation
     """
     if mturk_client is None:
-        mturk_client = client()
-    if hit_id is not None:
-        hit = get_hit(hit_id, mturk_client=mturk_client)
-    if type(hit) is str:
-        content = hit
-    elif hit is not None:
-        content = hit.get('RequesterAnnotation', '')
-    if len(content) > 0:
+        mturk_client = client
+    hit, p = _get_hit(hit_id, mturk_client=mturk_client)
+    return parse_requester_annotation(hit.get('RequesterAnnotation', ''), delete_temp_file, s3_resource)
+
+
+def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None):
+    s3_resource = s3_resource if s3_resource else s3.resource
+    if content and len(content) > 0:
         try:
             content = json.loads(content)
             if 'payload' in content:
@@ -688,7 +716,7 @@ def build_qualification_requirement(qualification_type_id, comparator, values=No
 
 
 def build_masters_requirement(actions_guarded=None):
-    if _production:
+    if __production:
         return build_qualification_requirement('2F1QJWKUDD8XADTFD2Q0G6UTO95ALH',
                                                QualificationComparitor.Exists,
                                                actions_guarded=actions_guarded)

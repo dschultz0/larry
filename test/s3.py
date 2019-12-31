@@ -1,5 +1,5 @@
 import unittest
-import larrydata as ld
+import larry as ld
 
 # S3 testing objects
 my_dict = {
@@ -15,7 +15,7 @@ my_listofdicts = [
 my_list = ['a', 'b', 'c', '3', 'd', '2', 'e', '1']
 my_string = 'foobar'
 my_image_url = 'https://hilltop-demo.s3-us-west-2.amazonaws.com/images/1557026914963.jpg'
-prefix = 'larrydata-testing/'
+prefix = 'larry-testing/'
 
 
 class S3Tests(unittest.TestCase):

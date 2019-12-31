@@ -1,5 +1,5 @@
 import unittest
-import larrydata as ld
+import larry as ld
 
 
 class MyTestCase(unittest.TestCase):

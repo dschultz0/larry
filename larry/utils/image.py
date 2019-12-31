@@ -1,5 +1,5 @@
 import math
-from larrydata import s3 as s3
+from larry import s3 as s3
 from io import BytesIO
 
 
@@ -99,7 +99,6 @@ def intersection_over_union(a, b):
     return intersection / union
 
 
-# Utilities for drawing boxes produced via various means
 def render_boxes(boxes,
                  image=None,
                  image_uri=None,
@@ -140,6 +139,8 @@ def render_boxes(boxes,
                 # select a color to use with this box
                 if isinstance(color, str):
                     box_color = color
+                elif callable(color):
+                    box_color = color(idx, item)
                 elif color_index:
                     # TODO: Fix array out of bounds issue
                     box_color = color[color_index(idx, item)]
@@ -206,7 +207,8 @@ def render_boxes_from_objects(objects,
                               image=None,
                               image_uri=None,
                               labels=None,
-                              single_image=True):
+                              single_image=True,
+                              color=None):
     # TODO: Avoid an unnecessary copy step when coming from uri
     if image_uri:
         image = s3.read_pillow_image(uri=image_uri)
@@ -219,20 +221,32 @@ def render_boxes_from_objects(objects,
     if isinstance(objects, dict):
         annotation = accessor(objects)
         if labels:
-            return render_boxes(annotation, image=image, image_uri=image_uri,
+            return render_boxes(annotation, image=image, image_uri=image_uri, color=color,
                                 color_index=lambda idx, item: _find_label_index(item, labels))
         else:
-            return render_boxes(annotation, image=image, image_uri=image_uri)
+            return render_boxes(annotation, image=image, image_uri=image_uri, color=color)
     elif single_image:
         for idx, obj in enumerate(objects):
             annotation = accessor(obj)
-            image = render_boxes(annotation, image=image, color_index=lambda i, item: idx)
+            if callable(color):
+                image = render_boxes(annotation, image=image,
+                                     color=lambda o_idx, e_idx, item: color(idx, e_idx, item),
+                                     color_index=lambda i, item: idx)
+            else:
+                image = render_boxes(annotation, image=image,
+                                     color_index=lambda i, item: idx)
         return image
     else:
         images = []
         for idx, obj in enumerate(objects):
             annotation = accessor(obj)
-            images.append(render_boxes(annotation, image=image, color_index=lambda i, item: idx))
+            if callable(color):
+                images.append(render_boxes(annotation, image=image,
+                                           color=lambda e_idx, item: color(idx, e_idx, item),
+                                           color_index=lambda i, item: idx))
+            else:
+                images.append(render_boxes(annotation, image=image,
+                                           color_index=lambda i, item: idx))
         return images
 
 
@@ -284,4 +298,3 @@ def join_images(images, horizontal=True):
     except ImportError as e:
         # Simply raise the ImportError to let the user know this requires Pillow to function
         raise e
-
