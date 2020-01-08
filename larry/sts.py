@@ -1,4 +1,4 @@
-import larry.utils
+import larry
 import boto3
 
 

@@ -4,12 +4,12 @@ import xml.etree.ElementTree as ET
 import json
 import zlib
 import base64
-import larry.s3 as s3
-import larry.utils
+import larry
 from enum import Enum
 from collections.abc import Iterable
 from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
+import datetime
 
 
 # Local client
@@ -37,7 +37,7 @@ def set_session(aws_access_key_id=None, aws_secret_access_key=None, aws__session
     """
     global __session, client
     __session = boto_session if boto_session else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
-    s3.set_session(boto_session=__session)
+    larry.s3.set_session(boto_session=__session)
     __create_client()
 
 
@@ -121,7 +121,9 @@ def set_environment(environment=PRODUCTION, hit_id=None):
 
 
 def mturk_client_environment(c):
-    if hasattr(c, 'production'):
+    if c is None:
+        return None
+    elif hasattr(c, 'production'):
         return c.production
     else:
         return c._endpoint.host == 'https://mturk-requester.us-east-1.amazonaws.com'
@@ -248,7 +250,9 @@ def create_hit(title,
     })
     if reward_cents:
         params['reward'] = str(reward_cents / 100)
-    return mturk_client.create_hit(**params).get('HIT')
+    return HIT(mturk_client.create_hit(**params).get('HIT'),
+               mturk_client=mturk_client,
+               production=mturk_client_environment(mturk_client))
 
 
 def create_hit_type(title,
@@ -298,7 +302,7 @@ def get_assignment(assignment_id, mturk_client=None):
     :return: A tuple of assignment and hit dicts
     """
     a, h = _get_assignment(assignment_id, mturk_client)
-    return Assignment(a), HIT(h)
+    return Assignment(a), HIT(h, mturk_client, mturk_client_environment(mturk_client))
 
 
 def get_account_balance(mturk_client=None):
@@ -319,7 +323,7 @@ def get_hit(hit_id, mturk_client=None):
     :return: A dict containing HIT attributes
     """
     hit, prod = _get_hit(hit_id, mturk_client)
-    return HIT(hit, production=prod)
+    return HIT(hit, mturk_client=mturk_client, production=prod)
 
 
 def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=True, mturk_client=None):
@@ -378,7 +382,7 @@ def list_hits(mturk_client=None):
         else:
             pages_to_get = False
         for hit in response.get('HITs', []):
-            yield HIT(hit)
+            yield HIT(hit, mturk_client, mturk_client_environment(mturk_client))
 
 
 def create_qualification_type(name, description, keywords=None, status='Active', retry_delay=None, test=None,
@@ -469,6 +473,15 @@ def add_notification(hit_type_id, destination, event_types, mturk_client=None):
     )
 
 
+def update_expiration(hit_id, expire_at, mturk_client=None):
+    mturk_client = mturk_client if mturk_client else client
+    mturk_client.update_expiration_for_hit(HITId=hit_id, ExpireAt=expire_at)
+
+
+def expire_hit(hit_id, mturk_client=None):
+    update_expiration(hit_id, datetime.datetime.now(), mturk_client)
+
+
 def parse_answers(answer):
     """
     Parses the answer XML into a usable python dict for analysis. In cases where answers contain JSON strings
@@ -538,7 +551,7 @@ def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=No
     the account id (from STS) for the account being used
     :return: A string value that can be placed in the RequesterAnnotation field
     """
-    s3_resource = s3_resource if s3_resource else s3.resource
+    s3_resource = s3_resource if s3_resource else larry.s3.resource
     payload_string = json.dumps(payload, separators=(',', ':')) if type(payload) == dict else payload
 
     # Use the annotation 'as is' if possible
@@ -553,7 +566,7 @@ def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=No
 
         else:
             # Else post it to s3
-            uri = s3.write_temp_object(payload, 'mturk_requester_annotation/', s3_resource=s3_resource,
+            uri = larry.s3.write_temp_object(payload, 'mturk_requester_annotation/', s3_resource=s3_resource,
                                        bucket_identifier=bucket_identifier)
             return json.dumps({'payloadURI': uri}, separators=(',', ':'))
 
@@ -575,7 +588,7 @@ def retrieve_requester_annotation(hit_id, delete_temp_file=False, s3_resource=No
 
 
 def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None):
-    s3_resource = s3_resource if s3_resource else s3.resource
+    s3_resource = s3_resource if s3_resource else larry.s3.resource
     if content and len(content) > 0:
         try:
             content = json.loads(content)
@@ -584,9 +597,9 @@ def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None
             elif 'payloadBytes' in content:
                 return json.loads(zlib.decompress(base64.b85decode(content['payloadBytes'].encode())))
             elif 'payloadURI' in content:
-                results = s3.read_dict(uri=content['payloadURI'], s3_resource=s3_resource)
+                results = larry.s3.read_dict(uri=content['payloadURI'], s3_resource=s3_resource)
                 if delete_temp_file:
-                    s3.delete_object(uri=content['payloadURI'], s3_resource=s3_resource)
+                    larry.s3.delete_object(uri=content['payloadURI'], s3_resource=s3_resource)
                 return results
             else:
                 return content
@@ -607,7 +620,7 @@ def render_jinja_template(arguments, template=None, template_uri=None):
     try:
         from jinja2 import Template
         if template_uri:
-            template = s3.read_str(uri=template_uri)
+            template = larry.s3.read_str(uri=template_uri)
         jinja_template = Template(template)
         return jinja_template.render(arguments)
     except ImportError as e:

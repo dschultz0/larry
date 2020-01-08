@@ -1,5 +1,4 @@
-import larry.mturk
-import larry.utils
+import larry
 import collections
 
 
@@ -32,9 +31,9 @@ class HIT(collections.UserDict):
     def __str__(self):
         return "<{}: {}>".format(self.hit_id, self.status)
 
-    def refresh(self):
-        self.update(larry.mturk._get_hit(self.hit_id, self.__client))
-        if 'Assignments' in self:
+    def refresh(self, get_assignments=False):
+        self.update(larry.mturk._get_hit(self.hit_id, self.__client)[0])
+        if 'Assignments' in self or get_assignments:
             self.retrieve_assignments()
 
     def retrieve_assignments(self):
@@ -154,3 +153,6 @@ class HIT(collections.UserDict):
     @property
     def preview(self):
         return larry.mturk.preview_url(self.hit_type_id, self.production)
+
+    def expire(self):
+        larry.mturk.expire_hit(self.hit_id, self.__client)

@@ -1,6 +1,8 @@
 import json
 import datetime
-import larry.mturk
+import larry
+import larry.utils.image as image
+
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 

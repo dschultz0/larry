@@ -1,6 +1,7 @@
 import math
-from larry import s3 as s3
+import larry
 from io import BytesIO
+import collections
 
 
 def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=None, max_bytes=None):
@@ -9,8 +10,8 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
         if image:
             src_bytes = _image_byte_count(image)
         else:
-            src_bytes = s3.get_object_size(bucket, key, uri)
-            image = s3.read_pillow_image(bucket, key, uri)
+            src_bytes = larry.s3.get_object_size(bucket, key, uri)
+            image = larry.s3.read_pillow_image(bucket, key, uri)
         x, y = image.size
         src_pixels = x * y
         bytes_scalar = math.sqrt(max_bytes/src_bytes) if max_bytes else 1
@@ -71,7 +72,7 @@ def augment_box_attributes(box):
 
 
 def box_area(box):
-    if isinstance(box, dict):
+    if isinstance(box, collections.Mapping):
         box = box_coordinates(box)
     if box:
         return (box[2] - box[0]) * (box[3] - box[1])
@@ -80,9 +81,9 @@ def box_area(box):
 
 
 def box_intersection(a, b):
-    if isinstance(a, dict):
+    if isinstance(a, collections.Mapping):
         a = box_coordinates(a)
-    if isinstance(b, dict):
+    if isinstance(b, collections.Mapping):
         b = box_coordinates(b)
     intersection = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
     if intersection[2] < intersection[0] or intersection[3] < intersection[1]:
@@ -110,7 +111,7 @@ def render_boxes(boxes,
                  get_box=None,
                  color_index=None):
     if image_uri:
-        image = s3.read_pillow_image(uri=image_uri)
+        image = larry.s3.read_pillow_image(uri=image_uri)
     # Change palette mode images to RGB so that standard palette colors can be drawn on them
     if image.mode == 'P':
         image = image.convert(mode='RGB')
@@ -211,14 +212,14 @@ def render_boxes_from_objects(objects,
                               color=None):
     # TODO: Avoid an unnecessary copy step when coming from uri
     if image_uri:
-        image = s3.read_pillow_image(uri=image_uri)
+        image = larry.s3.read_pillow_image(uri=image_uri)
     # Change palette mode images to RGB so that standard palette colors can be drawn on them
     if image.mode == 'P':
         image = image.convert(mode='RGB')
     else:
         image = image.copy()
 
-    if isinstance(objects, dict):
+    if isinstance(objects, collections.Mapping):
         annotation = accessor(objects)
         if labels:
             return render_boxes(annotation, image=image, image_uri=image_uri, color=color,

@@ -5,11 +5,10 @@ from boto3.s3.transfer import TransferConfig
 from io import StringIO, BytesIO
 import os
 import json
-import larry.sts as sts
+import larry
 import uuid
 import urllib.request
 import urllib.parse
-import larry.utils
 from zipfile import ZipFile
 
 # Local S3 resource object
@@ -36,7 +35,7 @@ def set_session(aws_access_key_id=None,
     """
     global __session, resource
     __session = boto_session if boto_session is not None else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
-    sts.set_session(boto_session=__session)
+    larry.sts.set_session(boto_session=__session)
     resource = __session.resource('s3')
 
 
@@ -713,7 +712,7 @@ def get_temp_bucket(region=None, s3_resource=None, bucket_identifier=None):
     if region is None:
         region = __session.region_name
     if bucket_identifier is None:
-        bucket_identifier = sts.account_id()
+        bucket_identifier = larry.sts.account_id()
     bucket = '{}-larry-{}'.format(bucket_identifier, region)
     create_bucket(bucket, region=region, s3_resource=s3_resource)
     return bucket
