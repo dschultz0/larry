@@ -1,4 +1,5 @@
-import larry
+from larry import utils
+from larry import mturk
 import collections
 
 
@@ -8,7 +9,7 @@ class HIT(collections.UserDict):
         self.__client = mturk_client
         collections.UserDict.__init__(self)
         if isinstance(data, str):
-            hit, prod = larry.mturk._get_hit(data, mturk_client)
+            hit, prod = mturk._get_hit(data, mturk_client)
             self.update(hit)
             self['Production'] = prod
         else:
@@ -21,7 +22,7 @@ class HIT(collections.UserDict):
         for key in ['CreationTime', 'Expiration']:
             try:
                 if key in self and isinstance(self[key], str):
-                    self[key] = larry.utils.parse_date(self[key])
+                    self[key] = utils.parse_date(self[key])
             except ValueError:
                 pass
 
@@ -32,17 +33,17 @@ class HIT(collections.UserDict):
         return "<{}: {}>".format(self.hit_id, self.status)
 
     def refresh(self, get_assignments=False):
-        self.update(larry.mturk._get_hit(self.hit_id, self.__client)[0])
+        self.update(mturk._get_hit(self.hit_id, self.__client)[0])
         if 'Assignments' in self or get_assignments:
             self.retrieve_assignments()
 
     def retrieve_assignments(self):
-        self['Assignments'] = list(larry.mturk.list_assignments_for_hit(self.hit_id))
+        self['Assignments'] = list(mturk.list_assignments_for_hit(self.hit_id))
         return self['Assignments']
 
     def retrieve_annotation(self, s3_resource=None):
-        self['Annotation'] = larry.mturk.parse_requester_annotation(self.get('RequesterAnnotation'),
-                                                                    s3_resource=s3_resource)
+        self['Annotation'] = mturk.parse_requester_annotation(self.get('RequesterAnnotation'),
+                                                              s3_resource=s3_resource)
 
     def __missing__(self, key):
         if key == 'Assignments':
@@ -152,7 +153,7 @@ class HIT(collections.UserDict):
 
     @property
     def preview(self):
-        return larry.mturk.preview_url(self.hit_type_id, self.production)
+        return mturk.preview_url(self.hit_type_id, self.production)
 
     def expire(self):
-        larry.mturk.expire_hit(self.hit_id, self.__client)
+        mturk.expire_hit(self.hit_id, self.__client)

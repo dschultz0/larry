@@ -1,18 +1,11 @@
 import boto3
-#import larry.s3 as s3
-#import larry.mturk as mturk
-#import larry.sqs as sqs
-#import larry.sts as sts
-#import larry.sagemaker as sagemaker
-#import larry.utils as utils
-#import larry.types as types
 from larry import s3
 from larry import mturk
 from larry import sqs
 from larry import sts
 from larry import sagemaker
 
-__version__ = "0.1.7"
+__version__ = "0.1.12"
 
 
 def _propagate_session():

@@ -5,11 +5,13 @@ from boto3.s3.transfer import TransferConfig
 from io import StringIO, BytesIO
 import os
 import json
-import larry
+from larry import utils
+from larry import sts
 import uuid
 import urllib.request
 import urllib.parse
 from zipfile import ZipFile
+from collections import Mapping
 
 # Local S3 resource object
 resource = None
@@ -34,8 +36,8 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, resource
-    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
-    larry.sts.set_session(boto_session=__session)
+    __session = boto_session if boto_session is not None else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    sts.set_session(boto_session=__session)
     resource = __session.resource('s3')
 
 
@@ -112,7 +114,7 @@ def read_dict(bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=Non
     """
     s3_resource = s3_resource if s3_resource else resource
     return json.loads(read_object(bucket, key, uri, s3_resource=s3_resource).decode(encoding),
-                      object_hook=larry.utils.JSONDecoder)
+                      object_hook=utils.JSONDecoder)
 
 
 def read_str(bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None):
@@ -148,7 +150,7 @@ def read_list_of_dict(bucket=None, key=None, uri=None, encoding='utf-8', newline
     records = []
     for line in lines:
         if len(line) > 0:
-            record = json.loads(line, object_hook=larry.utils.JSONDecoder)
+            record = json.loads(line, object_hook=utils.JSONDecoder)
             records.append(record)
     return records
 
@@ -246,7 +248,6 @@ def write_object(value, bucket=None, key=None,
                  uri=None,
                  acl=None,
                  newline='\n',
-                 json_default=str,
                  content_type=None,
                  s3_resource=None):
     """
@@ -258,7 +259,6 @@ def write_object(value, bucket=None, key=None,
     :param uri: An s3:// path containing the bucket and key of the object
     :param acl: The canned ACL to apply to the object
     :param newline: Character(s) to use as a newline for list objects
-    :param json_default: default function for rendering data types
     :param content_type: Content type to apply to the file, if not present a suggested type will be applied
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
@@ -287,23 +287,23 @@ def write_object(value, bucket=None, key=None,
         (bucket, key) = decompose_uri(uri)
     extension = key.split('.')[-1]
     # JSON
-    if type(value) is dict:
+    if isinstance(value, Mapping):
         if content_type is None:
             content_type = 'application/json'
-        return write(json.dumps(value, default=json_default, cls=larry.utils.JSONEncoder), bucket, key, uri,
+        return write(json.dumps(value, cls=utils.JSONEncoder), bucket, key, uri,
                      acl, content_type=content_type, s3_resource=s3_resource)
     # Text
-    elif type(value) is str:
+    elif isinstance(value, str):
         if content_type is None:
             content_type = extension_types.get(extension, 'text/plain')
         return write(value, bucket, key, uri, acl, content_type=content_type, s3_resource=s3_resource)
-    elif type(value) is list:
+    elif isinstance(value, list):
         if content_type is None:
             content_type = extension_types.get(extension, 'text/plain')
         buff = StringIO()
         for row in value:
-            if type(row) is dict:
-                buff.write(json.dumps(row, default=json_default, cls=larry.utils.JSONEncoder) + newline)
+            if isinstance(row, Mapping):
+                buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
             else:
                 buff.write(str(row) + newline)
         return write(buff.getvalue(), bucket, key, uri, acl, content_type=content_type, s3_resource=s3_resource)
@@ -376,7 +376,7 @@ def write_as_csv(rows, bucket=None, key=None, uri=None, acl=None, delimiter=',',
         buff.write('')
 
     # list
-    elif type(rows[0]) is list:
+    elif isinstance(rows[0], list):
         indices = columns if columns else None
         if headers:
             buff.write(_array_to_string(headers, delimiter) + "\n")
@@ -384,7 +384,7 @@ def write_as_csv(rows, bucket=None, key=None, uri=None, acl=None, delimiter=',',
             buff.write(_array_to_string(row, delimiter, indices) + "\n")
 
     # dict
-    elif type(rows[0]) is dict:
+    elif isinstance(rows[0], Mapping):
         keys = columns if columns else rows[0].keys()
         buff.write(_array_to_string(headers if headers else keys, delimiter) + "\n")
 
@@ -396,7 +396,7 @@ def write_as_csv(rows, bucket=None, key=None, uri=None, acl=None, delimiter=',',
             buff.write(line + "\n")
 
     # string
-    elif type(rows[0]) is str:
+    elif isinstance(rows[0], str):
         buff.writelines(rows)
     else:
         raise Exception('Invalid input')
@@ -452,13 +452,13 @@ def _find_largest_common_prefix(values):
     :param values: List of values (strings or tuples containing a string in the first position)
     :return: String prefix common to all values
     """
-    if type(values[0]) is tuple:
+    if isinstance(values[0], tuple):
         prefix, *_ = values[0]
     else:
         prefix = values[0]
 
     for value in values:
-        key = value[0] if type(value) is tuple else value
+        key = value[0] if isinstance(value, tuple) else value
         while key[:len(prefix)] != prefix and len(prefix) > 0:
             prefix = prefix[:-1]
     return prefix
@@ -479,7 +479,7 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
     if uris:
         keys = []
         for value in uris:
-            if type(value) is tuple:
+            if isinstance(value, tuple):
                 uri, *z = value
                 b, key = decompose_uri(uri)
                 keys.append(tuple([key]) + tuple(z))
@@ -499,7 +499,7 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
     # Search for any keys that can't be found
     not_found = []
     for value in keys:
-        key = value[0] if type(value) is tuple else value
+        key = value[0] if isinstance(value, tuple) else value
         if key not in all_keys:
             not_found.append(value)
     return not_found
@@ -712,7 +712,7 @@ def get_temp_bucket(region=None, s3_resource=None, bucket_identifier=None):
     if region is None:
         region = __session.region_name
     if bucket_identifier is None:
-        bucket_identifier = larry.sts.account_id()
+        bucket_identifier = sts.account_id()
     bucket = '{}-larry-{}'.format(bucket_identifier, region)
     create_bucket(bucket, region=region, s3_resource=s3_resource)
     return bucket

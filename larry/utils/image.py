@@ -1,7 +1,7 @@
 import math
-import larry
 from io import BytesIO
 import collections
+from larry import s3
 
 
 def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=None, max_bytes=None):
@@ -10,8 +10,8 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
         if image:
             src_bytes = _image_byte_count(image)
         else:
-            src_bytes = larry.s3.get_object_size(bucket, key, uri)
-            image = larry.s3.read_pillow_image(bucket, key, uri)
+            src_bytes = s3.get_object_size(bucket, key, uri)
+            image = s3.read_pillow_image(bucket, key, uri)
         x, y = image.size
         src_pixels = x * y
         bytes_scalar = math.sqrt(max_bytes/src_bytes) if max_bytes else 1
@@ -111,7 +111,7 @@ def render_boxes(boxes,
                  get_box=None,
                  color_index=None):
     if image_uri:
-        image = larry.s3.read_pillow_image(uri=image_uri)
+        image = s3.read_pillow_image(uri=image_uri)
     # Change palette mode images to RGB so that standard palette colors can be drawn on them
     if image.mode == 'P':
         image = image.convert(mode='RGB')
@@ -212,7 +212,7 @@ def render_boxes_from_objects(objects,
                               color=None):
     # TODO: Avoid an unnecessary copy step when coming from uri
     if image_uri:
-        image = larry.s3.read_pillow_image(uri=image_uri)
+        image = s3.read_pillow_image(uri=image_uri)
     # Change palette mode images to RGB so that standard palette colors can be drawn on them
     if image.mode == 'P':
         image = image.convert(mode='RGB')

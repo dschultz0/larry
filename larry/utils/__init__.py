@@ -1,10 +1,12 @@
 import json
 import datetime
-import larry
-import larry.utils.image as image
+from larry.mturk.HIT import HIT
+from larry.mturk.Assignment import Assignment
+from larry.types import Box
 
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S%z'
+TIME_FORMAT = '%H:%M:%S'
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -12,22 +14,30 @@ class JSONEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime.datetime):
             return date_to_string(obj)
-        elif isinstance(obj, larry.mturk.HIT):
+        elif isinstance(obj, datetime.timedelta):
+            return round(obj.total_seconds(), 3)
+        elif isinstance(obj, HIT):
             hit = {i: obj[i] for i in obj if i != 'Question'}
             hit['__HIT__'] = True
             return hit
-        elif isinstance(obj, larry.mturk.Assignment):
+        elif isinstance(obj, Assignment):
             assignment = {i: obj[i] for i in obj}
             assignment['__Assignment__'] = True
             return assignment
+        elif isinstance(obj, Box):
+            box = {i: obj[i] for i in obj}
+            box['__Box__'] = True
+            return box
         return json.JSONEncoder.default(self, obj)
 
 
 def JSONDecoder(dct):
     if '__HIT__' in dct:
-        return larry.mturk.HIT(dct)
+        return HIT(dct)
     if '__Assignment__' in dct:
-        return larry.mturk.Assignment(dct)
+        return Assignment(dct)
+    if '__Box__' in dct:
+        return Box(dct)
     return dct
 
 

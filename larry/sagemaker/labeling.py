@@ -1,7 +1,8 @@
 import json
-import larry
 import boto3
 import os
+from larry import utils
+from larry import s3
 from botocore.exceptions import ClientError
 from larry.utils.image import scale_image_to_size
 
@@ -28,7 +29,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(**utils.copy_non_null_keys(locals()))
     __client = __session.client('sagemaker')
 
 
@@ -54,9 +55,9 @@ def build_pre_response_from_object(event, log_details=True, input_attribute='tas
     source_ref = event['dataObject'].get('source-ref')
     if source_ref:
         if s3_resource:
-            value = larry.s3.read_dict(uri=source_ref, s3_resource=s3_resource)
+            value = s3.read_dict(uri=source_ref, s3_resource=s3_resource)
         else:
-            value = larry.s3.read_dict(uri=source_ref)
+            value = s3.read_dict(uri=source_ref)
     else:
         source = event['dataObject'].get('source')
         if source is None:
@@ -117,7 +118,7 @@ def extract_worker_responses(annotations):
 
 def get_payload(event):
     if 'payload' in event:
-        return larry.s3.read_dict(uri=event['payload']['s3Uri'])
+        return s3.read_dict(uri=event['payload']['s3Uri'])
     else:
         return event.get('test_payload', [])
 
@@ -266,9 +267,9 @@ def get_job_state(name, sagemaker_client=None):
 def get_worker_responses(output_uri, job_name):
     by_worker = {}
     by_item = {}
-    bucket_name, k = larry.s3.decompose_uri(output_uri)
-    for response_key in larry.s3.list_objects(uri=os.path.join(output_uri, job_name, 'annotations/worker-response')):
-        response_obj = larry.s3.read_dict(bucket_name, response_key)
+    bucket_name, k = s3.decompose_uri(output_uri)
+    for response_key in s3.list_objects(uri=os.path.join(output_uri, job_name, 'annotations/worker-response')):
+        response_obj = s3.read_dict(bucket_name, response_key)
         item_id = response_key.split('/')[-2]
         by_item[item_id] = response_obj
         for response in response_obj['answers']:
@@ -282,7 +283,7 @@ def get_worker_responses(output_uri, job_name):
 
 def get_results(output_uri, job_name):
     try:
-        return larry.s3.read_list_of_dict(uri=os.path.join(output_uri, job_name, 'manifests/output/output.manifest'))
+        return s3.read_list_of_dict(uri=os.path.join(output_uri, job_name, 'manifests/output/output.manifest'))
     except ClientError as e:
         if e.response['Error']['Code'] == 'NoSuchKey':
             return []
@@ -396,10 +397,10 @@ def scale_oversized_images_in_manifest(manifest, bucket=None, key_prefix=None, u
         img, scalar = scale_image_to_size(uri=new_item['source-ref'])
         if scalar is not None:
             if uri_prefix:
-                (bucket, key_prefix) = larry.s3.decompose_uri(uri_prefix)
+                (bucket, key_prefix) = s3.decompose_uri(uri_prefix)
             if key_prefix is None:
                 key_prefix = 'labeling_temp_images/'
-            uri = larry.s3.write_temp_object(img, key_prefix, bucket=bucket)
+            uri = s3.write_temp_object(img, key_prefix, bucket=bucket)
             new_item['original-source-ref'] = new_item.pop('source-ref')
             new_item['source-ref'] = uri
             new_item['scalar'] = scalar
@@ -416,7 +417,7 @@ def reverse_scaling_of_annotation(manifest, label_attribute_name, delete_scaled_
             scalar = new_item.pop('scalar')
             scaled_image = new_item['source-ref']
             if delete_scaled_images:
-                larry.s3.delete_object(uri=scaled_image)
+                s3.delete_object(uri=scaled_image)
             new_item['source-ref'] = source_image
             for annotation in new_item[label_attribute_name]['annotations']:
                 annotation['width'] = int(annotation['width'] / scalar)

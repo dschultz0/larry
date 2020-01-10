@@ -4,11 +4,12 @@ import xml.etree.ElementTree as ET
 import json
 import zlib
 import base64
-import larry
 from enum import Enum
 from collections.abc import Iterable
 from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
+from larry import utils
+from larry import s3
 import datetime
 
 
@@ -36,8 +37,8 @@ def set_session(aws_access_key_id=None, aws_secret_access_key=None, aws__session
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session else boto3.session.Session(**larry.utils.copy_non_null_keys(locals()))
-    larry.s3.set_session(boto_session=__session)
+    __session = boto_session if boto_session else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    s3.set_session(boto_session=__session)
     __create_client()
 
 
@@ -144,13 +145,13 @@ def environment():
 # TODO Review how someone would use this to see if supporting iterables or other object types makes sense
 def accept_qualification_request(request_id, value=None, mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = larry.utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
+    params = utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
     mturk_client.accept_qualification_request(**params)
 
 
 def approve(assignment, feedback=None, override_rejection=None, mturk_client=None):
     def _approve_assignment(_assignment_id, _feedback, _override_rejection):
-        params = larry.utils.map_parameters(locals(), {
+        params = utils.map_parameters(locals(), {
             '_assignment_id': 'AssignmentId',
             '_feedback': 'RequesterFeedback',
             '_override_rejection': 'OverrideRejection'
@@ -187,7 +188,7 @@ def assign_qualification(qualification, worker_id, value=None, send_notification
             for worker in worker_id:
                 assign_qualification(qualification_type_id, worker, value, send_notification, mturk_client)
     else:
-        params = larry.utils.map_parameters(locals(), {
+        params = utils.map_parameters(locals(), {
             'worker_id': 'WorkerId',
             'value': 'IntegerValue',
             'send_notification': 'SendNotification'
@@ -200,7 +201,7 @@ associate_qualification_with_worker = assign_qualification
 
 def add_assignments(hit_id, additional_assignments, request_token=None, mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = larry.utils.map_parameters(locals(), {
+    params = utils.map_parameters(locals(), {
         'hit_id': 'HITId',
         'additional_assignments': 'NumberOfAdditionalAssignments',
         'request_token': 'UniqueRequestToken'
@@ -230,7 +231,7 @@ def create_hit(title,
                hit_layout_parameters=None,
                mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = larry.utils.map_parameters(locals(), {
+    params = utils.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -266,7 +267,7 @@ def create_hit_type(title,
                     qualification_requirements=None,
                     mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = larry.utils.map_parameters(locals(), {
+    params = utils.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -390,7 +391,7 @@ def create_qualification_type(name, description, keywords=None, status='Active',
                               mturk_client=None):
     if mturk_client is None:
         mturk_client = client
-    params = larry.utils.map_parameters(locals(), {
+    params = utils.map_parameters(locals(), {
         'name': 'Name',
         'keywords': 'Keywords',
         'description': 'Description',
@@ -410,7 +411,7 @@ def create_qualification_type(name, description, keywords=None, status='Active',
 def assign_qualification(qualification_type_id, worker_id, value=None, send_notification=False, mturk_client=None):
     if mturk_client is None:
         mturk_client = client
-    params = larry.utils.map_parameters(locals(), {
+    params = utils.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'send_notification': 'SendNotification',
@@ -424,7 +425,7 @@ def assign_qualification(qualification_type_id, worker_id, value=None, send_noti
 def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client
-    params = larry.utils.map_parameters(locals(), {
+    params = utils.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'reason': 'Reason'
@@ -551,7 +552,7 @@ def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=No
     the account id (from STS) for the account being used
     :return: A string value that can be placed in the RequesterAnnotation field
     """
-    s3_resource = s3_resource if s3_resource else larry.s3.resource
+    s3_resource = s3_resource if s3_resource else s3.resource
     payload_string = json.dumps(payload, separators=(',', ':')) if type(payload) == dict else payload
 
     # Use the annotation 'as is' if possible
@@ -566,7 +567,7 @@ def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=No
 
         else:
             # Else post it to s3
-            uri = larry.s3.write_temp_object(payload, 'mturk_requester_annotation/', s3_resource=s3_resource,
+            uri = s3.write_temp_object(payload, 'mturk_requester_annotation/', s3_resource=s3_resource,
                                        bucket_identifier=bucket_identifier)
             return json.dumps({'payloadURI': uri}, separators=(',', ':'))
 
@@ -588,7 +589,7 @@ def retrieve_requester_annotation(hit_id, delete_temp_file=False, s3_resource=No
 
 
 def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None):
-    s3_resource = s3_resource if s3_resource else larry.s3.resource
+    s3_resource = s3_resource if s3_resource else s3.resource
     if content and len(content) > 0:
         try:
             content = json.loads(content)
@@ -597,9 +598,9 @@ def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None
             elif 'payloadBytes' in content:
                 return json.loads(zlib.decompress(base64.b85decode(content['payloadBytes'].encode())))
             elif 'payloadURI' in content:
-                results = larry.s3.read_dict(uri=content['payloadURI'], s3_resource=s3_resource)
+                results = s3.read_dict(uri=content['payloadURI'], s3_resource=s3_resource)
                 if delete_temp_file:
-                    larry.s3.delete_object(uri=content['payloadURI'], s3_resource=s3_resource)
+                    s3.delete_object(uri=content['payloadURI'], s3_resource=s3_resource)
                 return results
             else:
                 return content
@@ -620,7 +621,7 @@ def render_jinja_template(arguments, template=None, template_uri=None):
     try:
         from jinja2 import Template
         if template_uri:
-            template = larry.s3.read_str(uri=template_uri)
+            template = s3.read_str(uri=template_uri)
         jinja_template = Template(template)
         return jinja_template.render(arguments)
     except ImportError as e:

@@ -1,5 +1,5 @@
 import collections
-import larry
+from larry.utils import image
 
 
 class Box(collections.UserDict):
@@ -9,32 +9,45 @@ class Box(collections.UserDict):
             self.update(dat)
 
     @classmethod
-    def from_position(cls, position, calc_coordinates=False, **kwargs):
+    def from_position(cls, position, **kwargs):
         obj = cls(position, kwargs)
-        if calc_coordinates:
-            obj._calc_coordinates()
+        obj._calc_coordinates()
         return obj
 
     @classmethod
-    def from_coords(cls, coordinates, calc_position=False, origin='topleft', size=None, width=None, height=None,
-                    **kwargs):
+    def from_percentage(cls, coordinates, origin='topleft', size=None, width=None, height=None, **kwargs):
+        if size is None and (height is None or width is None):
+            raise Exception("Size or height and width are required")
+        (width, height) = size if size else (width, height)
+
+        if origin == 'bottomleft':
+            coordinates = [coordinates[0] * width, (1 - coordinates[1]) * height,
+                           coordinates[2] * width, (1 - coordinates[3]) * height]
+        else:
+            coordinates = [coordinates[0] * width, coordinates[1] * height,
+                           coordinates[2] * width, coordinates[3] * height]
+        obj = cls({'coordinates': coordinates}, kwargs)
+        obj._calc_position()
+        return obj
+
+    @classmethod
+    def from_coords(cls, coordinates, origin='topleft', size=None, width=None, height=None, **kwargs):
         if origin == 'bottomleft':
             if size is None and height is None:
                 raise Exception("Using an origin of 'bottomleft' requires a size or height be provided")
             (width, height) = size if size else (None, height)
             coordinates = [coordinates[0], height - coordinates[3], coordinates[2], height - coordinates[1]]
         obj = cls({'coordinates': coordinates}, kwargs)
-        if calc_position:
-            obj._calc_position()
+        obj._calc_position()
         return obj
 
     def scaled(self, ratio):
         box = self.copy()
-        for k, v in box.items():
-            if k == 'coordinates':
-                box[k] = [v[0] * ratio, v[1] * ratio, v[2] * ratio, v[3] * ratio]
-            elif k in ['top', 'left', 'width', 'height']:
-                box[k] = v * ratio
+        for key, value in box.items():
+            if key == 'coordinates':
+                box[key] = [v * ratio for v in value]
+            elif key in ['top', 'left', 'width', 'height']:
+                box[key] = value * ratio
         return box
 
     def offset(self, x, y):
@@ -51,7 +64,7 @@ class Box(collections.UserDict):
     def intersecting_boxes(self, boxes):
         intersecting = []
         for box in boxes:
-            if larry.utils.image.box_area(larry.utils.image.box_intersection(self, box)) > 0:
+            if image.box_area(image.box_intersection(self, box)) > 0:
                 intersecting.append(box.offset(-self['left'], -self['top']))
         return intersecting
 

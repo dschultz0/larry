@@ -1,4 +1,5 @@
-import larry
+from larry import utils
+from larry import mturk
 import collections
 
 
@@ -7,19 +8,21 @@ class Assignment(collections.UserDict):
         self.__client = mturk_client
         collections.UserDict.__init__(self)
         if isinstance(data, str):
-            assignment, hit = larry.mturk._get_assignment(data, mturk_client)
+            assignment, hit = mturk._get_assignment(data, mturk_client)
             self.update(assignment)
         else:
             self.update(data)
             self._parse_datetime_values()
         if isinstance(self['Answer'], str):
-            self['Answer'] = larry.mturk.parse_answers(self['Answer'])
+            self['Answer'] = mturk.parse_answers(self['Answer'])
+        if 'SubmitTime' in self and 'AcceptTime' in self:
+            self['WorkTime'] = round((self['SubmitTime'] - self['AcceptTime']).total_seconds())
 
     def _parse_datetime_values(self):
         for key in ['AutoApprovalTime', 'AcceptTime', 'SubmitTime', 'ApprovalTime', 'RejectionTime', 'Deadline']:
             try:
                 if key in self and isinstance(self[key], str):
-                    self[key] = larry.utils.parse_date(self[key])
+                    self[key] = utils.parse_date(self[key])
             except ValueError:
                 pass
 
@@ -30,7 +33,7 @@ class Assignment(collections.UserDict):
         return "<{}: {}>".format(self.assignment_id, self.status)
 
     def refresh(self):
-        self.update(larry.mturk._get_assignment(self.assignment_id, self.__client)[0])
+        self.update(mturk._get_assignment(self.assignment_id, self.__client)[0])
 
     @property
     def assignment_id(self):
@@ -70,7 +73,7 @@ class Assignment(collections.UserDict):
 
     @property
     def work_time(self):
-        return self.submit_time-self.accept_time if self.submit_time and self.accept_time else None
+        return self.get('WorkTime', None)
 
     @property
     def deadline(self):
