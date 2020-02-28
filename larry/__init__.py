@@ -5,7 +5,7 @@ from larry import sqs
 from larry import sts
 from larry import sagemaker
 
-__version__ = "0.1.12"
+__version__ = "0.1.19"
 
 
 def _propagate_session():

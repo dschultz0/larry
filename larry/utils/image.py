@@ -284,18 +284,30 @@ def join_images(images, horizontal=True):
     try:
         from PIL import Image
 
-        # TODO: Add handling for variably sized images?
-        (x, y) = images[0].size
+        width = 0
+        height = 0
+        indices = []
 
         if horizontal:
-            canvas = Image.new('RGB', (x * len(images), y), color='white')
-            for idx, image in enumerate(images):
-                canvas.paste(image, (idx * x, 0))
+            for image in images:
+                (x, y) = image.size
+                height = max(height, y)
+                indices.append(width)
+                width += x
+            indices = [(x, 0) for x in indices]
         else:
-            canvas = Image.new('RGB', (x, y * len(images)), color='white')
-            for idx, image in enumerate(images):
-                canvas.paste(image, (0, idx * y))
-        return canvas
+            for image in images:
+                (x, y) = image.size
+                width = max(width, x)
+                indices.append(height)
+                height += y
+            indices = [(0, y) for y in indices]
+
+        canvas = Image.new('RGB', (width, height), color='white')
+        for idx, image in enumerate(images):
+            canvas.paste(image, indices[idx])
+
+        return canvas, indices
     except ImportError as e:
         # Simply raise the ImportError to let the user know this requires Pillow to function
         raise e

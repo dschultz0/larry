@@ -60,6 +60,13 @@ class HIT(collections.UserDict):
         return self['Assignments']
 
     @property
+    def answers(self):
+        for assignment in self['Assignments']:
+            answer = assignment['Answer'].copy()
+            answer['WorkerId'] = assignment['WorkerId']
+            yield answer
+
+    @property
     def hit_id(self):
         return self['HITId']
 

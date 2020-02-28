@@ -8,8 +8,9 @@ import json
 from larry import utils
 from larry import sts
 import uuid
-import urllib.request
-import urllib.parse
+from urllib.request import Request
+from urllib import parse
+from urllib import request
 from zipfile import ZipFile
 from collections import Mapping
 
@@ -559,7 +560,9 @@ def list_objects(bucket=None, prefix=None, uri=None, include_empty_keys=False, s
     if uri:
         (bucket, prefix) = decompose_uri(uri)
     paginator = s3_resource.meta.client.get_paginator('list_objects')
-    operation_parameters = {'Bucket': bucket, 'Prefix': prefix}
+    operation_parameters = {'Bucket': bucket}
+    if prefix:
+        operation_parameters['Prefix'] = prefix
     page_iterator = paginator.paginate(**operation_parameters)
     for page in page_iterator:
         for obj in page.get('Contents', []):
@@ -567,7 +570,7 @@ def list_objects(bucket=None, prefix=None, uri=None, include_empty_keys=False, s
                 yield obj['Key']
 
 
-def fetch(url, bucket=None, key=None, uri=None, s3_resource=None):
+def fetch(url, bucket=None, key=None, uri=None, s3_resource=None, **kwargs):
     """
     Retrieves the data defined by a URL to an S3 location.
     :param url: URL to retrieve
@@ -580,11 +583,9 @@ def fetch(url, bucket=None, key=None, uri=None, s3_resource=None):
     s3_resource = s3_resource if s3_resource else resource
     if uri:
         (bucket, key) = decompose_uri(uri)
-    try:
-        with urllib.request.urlopen(url) as response:
-            return write_object(response.read(), bucket=bucket, key=key, s3_resource=s3_resource)
-    except Exception as e:
-        print('Failed to retrieve {} due to {}'.format(url, e))
+    req = Request(url, **kwargs)
+    with request.urlopen(req) as response:
+        return write_object(response.read(), bucket=bucket, key=key, s3_resource=s3_resource)
 
 
 def download(directory, bucket=None, key=None, uri=None, use_threads=True, s3_resource=None):
@@ -679,7 +680,7 @@ def get_public_url(bucket=None, key=None, uri=None):
     """
     if uri:
         (bucket, key) = decompose_uri(uri)
-    return 'https://{}.s3.amazonaws.com/{}'.format(bucket, urllib.parse.quote(key))
+    return 'https://{}.s3.amazonaws.com/{}'.format(bucket, parse.quote(key))
 
 
 def create_bucket(bucket, acl='private', region=__session.region_name, s3_resource=None):
@@ -726,7 +727,7 @@ def download_to_zip(file, bucket, prefix=None, prefixes=None):
     with ZipFile(file, 'w') as zfile:
         for prefix in prefixes:
             for key in list_objects(bucket, prefix):
-                zfile.writestr(urllib.parse.quote(key), data=read_object(bucket, key))
+                zfile.writestr(parse.quote(key), data=read_object(bucket, key))
 
 
 def file_name_portion(uri):

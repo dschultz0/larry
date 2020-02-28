@@ -1,8 +1,9 @@
 import json
-import datetime
+from datetime import datetime, timedelta
 from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
 from larry.types import Box
+import re
 
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S%z'
@@ -12,9 +13,9 @@ TIME_FORMAT = '%H:%M:%S'
 class JSONEncoder(json.JSONEncoder):
 
     def default(self, obj):
-        if isinstance(obj, datetime.datetime):
+        if isinstance(obj, datetime):
             return date_to_string(obj)
-        elif isinstance(obj, datetime.timedelta):
+        elif isinstance(obj, timedelta):
             return round(obj.total_seconds(), 3)
         elif isinstance(obj, HIT):
             hit = {i: obj[i] for i in obj if i != 'Question'}
@@ -46,7 +47,7 @@ def date_to_string(obj):
 
 
 def parse_date(obj):
-    return datetime.datetime.strptime(obj, DATE_FORMAT)
+    return datetime.strptime(obj, DATE_FORMAT)
 
 
 def copy_non_null_keys(param_list):
@@ -63,3 +64,16 @@ def map_parameters(parameters, key_map):
         if parameters.get(k) is not None:
             result[i] = parameters[k]
     return result
+
+
+def create_s3_key(path, extension):
+    """Given a path and a file type, strips out all non A-Z0-9 characters and
+    appends the file type to the end: making paths and urls s3 friendly"""
+    return re.sub(r'\W+', '', path) + '.' + extension
+
+
+def show_progress(index, every, lst):
+    if index == len(lst)-1:
+        print('All {} completed at {}'.format(index+1, datetime.now()))
+    elif (index+1) % every == 0:
+        print('Completed {} at {}'.format(index+1, datetime.now()))

@@ -1,12 +1,21 @@
-import collections
+from collections import UserDict, Mapping
 from larry.utils import image
 
 
-class Box(collections.UserDict):
+class Box(UserDict):
     def __init__(self, *data):
-        collections.UserDict.__init__(self)
+        UserDict.__init__(self)
         for dat in data:
             self.update(dat)
+
+    @classmethod
+    def from_obj(cls, obj):
+        result = cls(obj)
+        if 'top' in obj and 'left' in obj and 'width' in obj and 'height' in obj:
+            result._calc_coordinates()
+        elif 'coordinates' in obj and len(obj['coordinates']) == 4:
+            result._calc_position()
+        return result
 
     @classmethod
     def from_position(cls, position, **kwargs):
@@ -41,6 +50,11 @@ class Box(collections.UserDict):
         obj._calc_position()
         return obj
 
+    @staticmethod
+    def is_box(obj):
+        return isinstance(obj, Mapping) and (('top' in obj and 'left' in obj and 'width' in obj and 'height' in obj) or
+                                             ('coordinates' in obj and len(obj['coordinates']) == 4))
+
     def scaled(self, ratio):
         box = self.copy()
         for key, value in box.items():
@@ -61,12 +75,15 @@ class Box(collections.UserDict):
                 box[k] = v + y
         return box
 
-    def intersecting_boxes(self, boxes):
+    def intersecting_boxes(self, boxes, min_overlap=0):
         intersecting = []
         for box in boxes:
-            if image.box_area(image.box_intersection(self, box)) > 0:
+            if image.box_area(image.box_intersection(self, box)) > image.box_area(box)*min_overlap:
                 intersecting.append(box.offset(-self['left'], -self['top']))
         return intersecting
+
+    def area(self):
+        return self['width'] * self['height']
 
     def _calc_coordinates(self):
         self['coordinates'] = [self['left'], self['top'], self['left'] + self['width'] - 1,

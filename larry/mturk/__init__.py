@@ -10,6 +10,8 @@ from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
 from larry import utils
 from larry import s3
+from larry.types import Box
+from collections import Mapping
 import datetime
 
 
@@ -490,6 +492,21 @@ def parse_answers(answer):
     :param answer: An MTurk Answer object
     :return: A dict containing the parsed answer data
     """
+    def _traverse_dict_for_objs(obj):
+        for k, v in obj.items():
+            if Box.is_box(v):
+                obj[k] = Box.from_obj(v)
+            elif isinstance(v, Mapping):
+                _traverse_dict_for_objs(v)
+            elif isinstance(v, list):
+                _traverse_list_for_objs(v)
+
+    def _traverse_list_for_objs(obj):
+        for i, v in enumerate(obj):
+            if Box.is_box(v):
+                obj[i] = Box.from_obj(v)
+            elif isinstance(value, Mapping):
+                _traverse_dict_for_objs(v)
     result = {}
     ns = {'mt': 'http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2005-10-01/QuestionFormAnswers.xsd'}
     root = ET.fromstring(answer)
@@ -532,6 +549,7 @@ def parse_answers(answer):
                 if a.find('mt:OtherSelection'):
                     selections.append(a.find('mt:OtherSelection').text)
                 result[name] = selections
+    _traverse_dict_for_objs(result)
     return result
 
 
@@ -623,6 +641,7 @@ def render_jinja_template(arguments, template=None, template_uri=None):
         if template_uri:
             template = s3.read_str(uri=template_uri)
         jinja_template = Template(template)
+        jinja_template.environment.policies['json.dumps_kwargs'] = {'cls': utils.JSONEncoder}
         return jinja_template.render(arguments)
     except ImportError as e:
         # We'll simply raise the ImportError to let the developer know this requires Jinja2 to function
