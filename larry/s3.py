@@ -404,7 +404,7 @@ def write_as_csv(rows, bucket=None, key=None, uri=None, acl=None, delimiter=',',
     return write(buff.getvalue(), bucket, key, uri, acl, s3_resource=s3_resource)
 
 
-def rename_object(old_bucket_name, old_key, new_bucket_name, new_key, s3_resource=None):
+def rename_object(old_bucket_name, old_key, new_bucket_name, new_key, old_uri=None, new_uri=None, s3_resource=None):
     """
     Renames an object in S3.
     :param old_bucket_name: Source bucket
@@ -414,6 +414,10 @@ def rename_object(old_bucket_name, old_key, new_bucket_name, new_key, s3_resourc
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: None
     """
+    if old_uri:
+        (old_bucket_name, old_key) = decompose_uri(old_uri)
+    if new_uri:
+        (new_bucket_name, new_key) = decompose_uri(new_uri)
     s3_resource = s3_resource if s3_resource else resource
     copy_source = {
         'Bucket': old_bucket_name,
@@ -421,6 +425,24 @@ def rename_object(old_bucket_name, old_key, new_bucket_name, new_key, s3_resourc
     }
     s3_resource.meta.client.copy(copy_source, new_bucket_name, new_key)
     s3_resource.meta.client.delete_object(Bucket=old_bucket_name, Key=old_key)
+
+
+def copy_object(old_bucket_name, old_key, new_bucket_name, new_key, old_uri=None, new_uri=None, s3_resource=None):
+    """
+    Renames an object in S3.
+    :param old_bucket_name: Source bucket
+    :param old_key: Source key
+    :param new_bucket_name: Target bucket
+    :param new_key: Target key
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: None
+    """
+    if old_uri:
+        (old_bucket_name, old_key) = decompose_uri(old_uri)
+    if new_uri:
+        (new_bucket_name, new_key) = decompose_uri(new_uri)
+    s3_resource = s3_resource if s3_resource else resource
+    s3_resource.meta.client.copy({'Bucket': old_bucket_name,'Key': old_key}, new_bucket_name, new_key)
 
 
 def object_exists(bucket=None, key=None, uri=None, s3_resource=None):
