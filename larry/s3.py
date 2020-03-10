@@ -119,6 +119,23 @@ def __decompose_location(require_bucket=True, require_key=False, key_arg='key'):
 
 @__load_resource
 @__decompose_location(require_key=True)
+def obj(*location, bucket=None, key=None, uri=None, s3_resource=None):
+    """
+    Retrieves header information for an object from S3 and returns it in a boto3 Object object.
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket
+    :param key: The key of the object
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: Boto3 S3 Object
+    """
+    o = s3_resource.Bucket(bucket).Object(key=key)
+    o.load()
+    return o
+
+
+@__load_resource
+@__decompose_location(require_key=True)
 def delete_object(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Deletes the object defined by the bucket/key pair or uri.
@@ -130,6 +147,29 @@ def delete_object(*location, bucket=None, key=None, uri=None, s3_resource=None):
     :return: Dict containing the boto3 response
     """
     return s3_resource.Bucket(bucket).Object(key=key).delete()
+
+
+@__load_resource
+def delete_objects(bucket=None, keys=None, uris=None, s3_resource=None):
+    """
+    Deletes all of the objects in the bucket referenced by the list of keys or uris.
+    :param bucket: The S3 bucket
+    :param keys: The key of the objects
+    :param uris: The s3:// paths containing the bucket and key of the object
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: Dict containing the boto3 response
+    """
+    if keys is None and uris is None:
+        raise Exception('Keys or uris must be provided')
+    objects = []
+    if uris:
+        for uri in uris:
+            key = get_object_key(uri)
+            objects.append({'Key': key})
+    else:
+        for key in keys:
+            objects.append({'Key': key})
+    return s3_resource.Bucket(bucket).delete_objects(Delete={'Objects': objects, 'Quiet': True})
 
 
 @__load_resource
