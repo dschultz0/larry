@@ -18,14 +18,21 @@ SIMPLE_STRING = 'foobar'
 IMAGE_URL = 'https://hilltop-demo.s3-us-west-2.amazonaws.com/images/1557026914963.jpg'
 BUCKET = 'larry-testing'
 KEY = 'test-objects/s3/1557026914963.jpg'
+URI = 's3://{}/{}'.format(BUCKET, KEY)
 PATH_PREFIX = 's3/'
-URI_PREFIX = 's3://{}/{}/'.format(BUCKET, PATH_PREFIX)
+URI_PREFIX = 's3://{}/{}'.format(BUCKET, PATH_PREFIX)
 
 
 class S3Tests(unittest.TestCase):
 
     def test_obj(self):
         o = lry.s3.obj(BUCKET, KEY)
+        o.load()
+        o = lry.s3.obj(URI)
+        o.load()
+        o = lry.s3.obj(bucket=BUCKET, key=KEY)
+        o.load()
+        o = lry.s3.obj(uri=URI)
         o.load()
         o = lry.s3.obj(BUCKET, KEY[:-1])
         with self.assertRaises(ClientError) as context:
@@ -49,6 +56,49 @@ class S3Tests(unittest.TestCase):
         with self.assertRaises(ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
+
+    def test_delete_multiple(self):
+        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        print(uris)
+        lry.s3.delete(uris)
+        o = lry.s3.obj(uris[3])
+        with self.assertRaises(ClientError) as context:
+            o.load()
+        self.assertEqual('Not Found', context.exception.response['Error']['Message'])
+        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        lry.s3.delete(uri=uris)
+        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        bucket = lry.s3.decompose_uri(uris[0])[0]
+        keys = [lry.s3.decompose_uri(uri)[1] for uri in uris]
+        lry.s3.delete(bucket, keys)
+        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        lry.s3.delete(bucket=bucket, key=keys)
+        o = lry.s3.obj(uris[4])
+        with self.assertRaises(ClientError) as context:
+            o.load()
+        self.assertEqual('Not Found', context.exception.response['Error']['Message'])
+
+    def test_get_size(self):
+        self.assertGreater(lry.s3.get_size(URI), 10000)
+        self.assertGreater(lry.s3.get_size(uri=URI), 10000)
+        self.assertGreater(lry.s3.get_size(BUCKET, KEY), 10000)
+        self.assertGreater(lry.s3.get_size(bucket=BUCKET, key=KEY), 10000)
 
     def test_readwrite_dict(self):
         dict_uri = ld.s3.write_temp_object(SIMPLE_DICT, prefix)

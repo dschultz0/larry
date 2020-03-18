@@ -71,7 +71,7 @@ def __load_resource(func):
     return decorated
 
 
-def __decompose_location(require_bucket=True, require_key=False, key_arg='key'):
+def __decompose_location(require_bucket=True, require_key=False, key_arg='key', allow_multiple=False):
     def decorate(func):
         spec = inspect.getfullargspec(func)
         offset = len(spec.args)
@@ -85,30 +85,50 @@ def __decompose_location(require_bucket=True, require_key=False, key_arg='key'):
                 if len(location) > 2:
                     raise Exception('Too many location values')
                 if len(location) == 1:
-                    if location[0].startswith('s3:'):
-                        (bucket, key) = decompose_uri(location[0])
-                        if bucket is None:
-                            raise Exception('Invalid S3 URI')
+                    if isinstance(location[0], list) and location[0][0].startswith('s3:'):
+                        uri = location[0]
+                    elif isinstance(location[0], str) and location[0].startswith('s3:'):
+                        uri = location[0]
                     else:
                         bucket = location[0]
                 else:
                     (bucket, key) = location
             elif len(location) > 0:
                 raise Exception('Both positional location and ' + key_arg + ' values are present')
-            if kwargs.get('uri'):
-                (bucket, key) = decompose_uri(kwargs.get('uri'))
-                if bucket is None:
-                    raise Exception('Invalid S3 URI')
-            if bucket:
-                kwargs['bucket'] = bucket
-            if key:
-                kwargs[key_arg] = key
 
-            if require_bucket and (kwargs.get('bucket') is None or len(kwargs.get('bucket')) == 0):
+            if 'uri' in kwargs and kwargs['uri'] is not None:
+                uri = kwargs['uri']
+            if 'bucket' in kwargs and kwargs['bucket'] is not None:
+                bucket = kwargs['bucket']
+            if key_arg in kwargs and kwargs[key_arg] is not None:
+                key = kwargs[key_arg]
+
+            if uri:
+                if isinstance(uri, list) and len(uri) > 0:
+                    if not allow_multiple:
+                        raise Exception('You cannot provide a list of URIs for {}'.format(func.__name__))
+                    pairs = [decompose_uri(u) for u in uri]
+                    key = []
+                    bucket = pairs[0][0]
+                    for pair in pairs:
+                        key.append(pair[1])
+                        if pair[0] != bucket:
+                            raise Exception('Multiple values for bucket are not allowed')
+                else:
+                    (bucket, key) = decompose_uri(uri)
+                    if bucket is None:
+                        raise Exception('Invalid S3 URI')
+
+            if isinstance(key, list) and not allow_multiple:
+                raise Exception('You cannot provide a list of keys for {}'.format(func.__name__))
+
+            if require_bucket and (bucket is None or len(bucket) == 0):
                 raise Exception('A bucket must be provided')
-            if require_key and (kwargs.get(key_arg) is None or len(kwargs.get(key_arg)) == 0):
+            if require_key and (key is None or len(key) == 0):
                 raise Exception('A key must be provided')
 
+            kwargs['bucket'] = bucket
+            kwargs[key_arg] = key
             return func(*args, **kwargs)
 
         return decomposed
@@ -133,7 +153,7 @@ def obj(*location, bucket=None, key=None, uri=None, s3_resource=None):
 
 
 @__load_resource
-@__decompose_location(require_key=True)
+@__decompose_location(require_key=True, allow_multiple=True)
 def delete(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Deletes the object defined by the bucket/key pair or uri.
@@ -151,29 +171,6 @@ def delete(*location, bucket=None, key=None, uri=None, s3_resource=None):
 
 
 @__load_resource
-def delete_objects(bucket=None, keys=None, uris=None, s3_resource=None):
-    """
-    Deletes all of the objects in the bucket referenced by the list of keys or uris.
-    :param bucket: The S3 bucket
-    :param keys: The key of the objects
-    :param uris: The s3:// paths containing the bucket and key of the object
-    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
-    :return: Dict containing the boto3 response
-    """
-    if keys is None and uris is None:
-        raise Exception('Keys or uris must be provided')
-    objects = []
-    if uris:
-        for uri in uris:
-            key = get_object_key(uri)
-            objects.append({'Key': key})
-    else:
-        for key in keys:
-            objects.append({'Key': key})
-    return s3_resource.Bucket(bucket).delete_objects(Delete={'Objects': objects, 'Quiet': True})
-
-
-@__load_resource
 @__decompose_location(require_key=True)
 def get(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
@@ -185,7 +182,7 @@ def get(*location, bucket=None, key=None, uri=None, s3_resource=None):
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: Dict containing the Body of the object and associated attributes
     """
-    return s3_resource.Bucket(bucket).Object(key=key).get()
+    return obj(bucket=bucket, key=key, s3_resource=s3_resource).get()
 
 
 @__load_resource
@@ -200,7 +197,7 @@ def get_size(*location, bucket=None, key=None, uri=None, s3_resource=None):
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: Size in bytes
     """
-    return s3_resource.Bucket(bucket).Object(key=key).content_length
+    return obj(bucket=bucket, key=key, s3_resource=s3_resource).content_length
 
 
 @__load_resource
@@ -587,13 +584,13 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
     extension = key.split('.')[-1]
     # JSON
     if isinstance(value, Mapping):
-        write_as(value, types.TYPE_DICT, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+        return write_as(value, types.TYPE_DICT, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                  content_type=content_type, content_encoding=content_encoding,
                  content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
                  storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
     # Text
     elif isinstance(value, str):
-        write_as(value, types.TYPE_STRING, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+        return write_as(value, types.TYPE_STRING, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                  content_type=content_type, content_encoding=content_encoding,
                  content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
                  storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
@@ -621,7 +618,7 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
         # try to write it as an image
         # TODO: Rethink this, perhaps check for attributes first rather than try/fail
         try:
-            write_as(value, types.TYPE_PILLOW_IMAGE, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+            return write_as(value, types.TYPE_PILLOW_IMAGE, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                      content_type=content_type, content_encoding=content_encoding, content_language=content_language,
                      content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
                      redirect=redirect, tags=tags, s3_resource=s3_resource)
