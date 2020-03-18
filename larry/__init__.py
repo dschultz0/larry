@@ -4,8 +4,10 @@ from larry import mturk
 from larry import sqs
 from larry import sts
 from larry import sagemaker
+from larry import lmbda
+from larry import iam
 
-__version__ = "0.1.19"
+__version__ = "0.1.20"
 
 
 def _propagate_session():
@@ -14,6 +16,8 @@ def _propagate_session():
     sqs.set_session(boto_session=__session)
     sts.set_session(boto_session=__session)
     sagemaker.set_session(boto_session=__session)
+    lmbda.set_session(boto_session=__session)
+    iam.set_session(boto_session=__session)
 
 
 # A local instance of the boto3 session to use

@@ -417,7 +417,7 @@ def reverse_scaling_of_annotation(manifest, label_attribute_name, delete_scaled_
             scalar = new_item.pop('scalar')
             scaled_image = new_item['source-ref']
             if delete_scaled_images:
-                s3.delete_object(uri=scaled_image)
+                s3.delete(uri=scaled_image)
             new_item['source-ref'] = source_image
             for annotation in new_item[label_attribute_name]['annotations']:
                 annotation['width'] = int(annotation['width'] / scalar)

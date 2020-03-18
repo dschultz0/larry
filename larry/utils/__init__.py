@@ -42,6 +42,17 @@ def JSONDecoder(dct):
     return dct
 
 
+def json_loads(value):
+    return json.loads(value, object_hook=JSONDecoder)
+
+
+def json_dumps(value, separators=None):
+    if separators:
+        return json.dumps(value, cls=JSONEncoder, separators=separators)
+    else:
+        return json.dumps(value, cls=JSONEncoder)
+
+
 def date_to_string(obj):
     return obj.strftime(DATE_FORMAT)
 

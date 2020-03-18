@@ -80,13 +80,15 @@ def use_sandbox():
     __create_client()
 
 
-def set_environment(environment=PRODUCTION, hit_id=None):
+def set_environment(environment=PRODUCTION, hit_id=None, assignment_id=None):
     """
     Set the environment that the library should use. If a HITId is provided, this will attempt to find
     the HIT in either environment and set the environment where that HITId is present.
     :param environment: The MTurk environment that the library should use (production or sandbox)
     :param hit_id: If provided, set the environment based on where the hit_id is present
-    :return: If a hit_id is provided then the HIT response is returned, else None
+    :param assignment_id: If provided, set the environment based on where the assignment_id is present
+    :return: If a hit_id is provided then the HIT response is returned, if an assignment_id is provided then a tuple of
+    Assignment and HIT are returned, else None
     """
     def _try_get_hit(_hit_id):
         try:
@@ -94,9 +96,15 @@ def set_environment(environment=PRODUCTION, hit_id=None):
         except ClientError as e:
             return e
 
+    def _try_get_assignment(_assignment_id):
+        try:
+            return get_assignment(_assignment_id)
+        except ClientError as e:
+            return e, None
+
     global client, __production, __session
+    existing_production = __production
     if hit_id:
-        existing_production = __production
 
         # Try prod first
         if not __production:
@@ -114,6 +122,25 @@ def set_environment(environment=PRODUCTION, hit_id=None):
             else:
                 __production = existing_production
                 raise hit
+
+    if assignment_id:
+
+        # Try prod first
+        if not __production:
+            __production = True
+            __create_client()
+        assignment, hit = _try_get_assignment(assignment_id)
+        if isinstance(assignment, Assignment):
+            return assignment, hit
+        else:
+            __production = False
+            __create_client()
+            sandbox_assignment, sandbox_hit = _try_get_assignment(assignment_id)
+            if isinstance(sandbox_assignment, Assignment):
+                return sandbox_assignment, sandbox_hit
+            else:
+                __production = existing_production
+                raise assignment
 
     elif environment.lower() == SANDBOX:
         __production = False
@@ -214,8 +241,8 @@ def add_assignments(hit_id, additional_assignments, request_token=None, mturk_cl
 create_additional_assignments_for_hit = add_assignments
 
 
-def create_hit(title,
-               description,
+def create_hit(title=None,
+               description=None,
                reward=None,
                reward_cents=None,
                lifetime=86400,
@@ -223,7 +250,13 @@ def create_hit(title,
                max_assignments=None,
                auto_approval_delay=None,
                keywords=None,
+               hit_type_id=None,
                question=None,
+               html_question=None,
+               external_question=None,
+               question_template=None,
+               question_template_uri=None,
+               template_context=None,
                annotation=None,
                qualification_requirements=None,
                request_token=None,
@@ -233,37 +266,65 @@ def create_hit(title,
                hit_layout_parameters=None,
                mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = utils.map_parameters(locals(), {
-        'title': 'Title',
-        'description': 'Description',
-        'reward': 'Reward',
-        'lifetime': 'LifetimeInSeconds',
-        'assignment_duration': 'AssignmentDurationInSeconds',
-        'max_assignments': 'MaxAssignments',
-        'auto_approval_delay': 'AutoApprovalDelayInSeconds',
-        'keywords': 'Keywords',
-        'question': 'Question',
-        'annotation': 'RequesterAnnotation',
-        'qualification_requirements': 'QualificationRequirements',
-        'request_token': 'UniqueRequestToken',
-        'assignment_review_policy': 'AssignmentReviewPolicy',
-        'hit_review_policy': 'HITReviewPolicy',
-        'hit_layout_id': 'HITLayoutId',
-        'hit_layout_parameters': 'HITLayoutParameters'
-    })
-    if reward_cents:
-        params['reward'] = str(reward_cents / 100)
-    return HIT(mturk_client.create_hit(**params).get('HIT'),
-               mturk_client=mturk_client,
-               production=mturk_client_environment(mturk_client))
+    if hit_type_id:
+        params = utils.map_parameters(locals(), {
+            'hit_type_id': 'HITTypeId',
+            'lifetime': 'LifetimeInSeconds',
+            'max_assignments': 'MaxAssignments',
+            'question': 'Question',
+            'request_token': 'UniqueRequestToken',
+            'assignment_review_policy': 'AssignmentReviewPolicy',
+            'hit_review_policy': 'HITReviewPolicy',
+            'hit_layout_id': 'HITLayoutId',
+            'hit_layout_parameters': 'HITLayoutParameters'
+        })
+    else:
+        params = utils.map_parameters(locals(), {
+            'title': 'Title',
+            'description': 'Description',
+            'reward': 'Reward',
+            'lifetime': 'LifetimeInSeconds',
+            'assignment_duration': 'AssignmentDurationInSeconds',
+            'max_assignments': 'MaxAssignments',
+            'auto_approval_delay': 'AutoApprovalDelayInSeconds',
+            'keywords': 'Keywords',
+            'question': 'Question',
+            'qualification_requirements': 'QualificationRequirements',
+            'request_token': 'UniqueRequestToken',
+            'assignment_review_policy': 'AssignmentReviewPolicy',
+            'hit_review_policy': 'HITReviewPolicy',
+            'hit_layout_id': 'HITLayoutId',
+            'hit_layout_parameters': 'HITLayoutParameters'
+        })
+        if reward_cents:
+            params['Reward'] = str(reward_cents / 100)
+
+    if html_question:
+        params['Question'] = render_html_question(html_question)
+    if external_question:
+        params['Question'] = render_external_question(external_question)
+    if annotation:
+        params['RequesterAnnotation'] = prepare_requester_annotation(annotation)
+    if question_template:
+        params['Question'] = render_jinja_template_question(template_context, template=question_template)
+    if question_template_uri:
+        params['Question'] = render_jinja_template_question(template_context, template_uri=question_template_uri)
+
+    if hit_type_id:
+        return HIT(mturk_client.create_hit_with_hit_type(**params).get('HIT'),
+                   mturk_client=mturk_client,
+                   production=mturk_client_environment(mturk_client))
+    else:
+        return HIT(mturk_client.create_hit(**params).get('HIT'),
+                   mturk_client=mturk_client,
+                   production=mturk_client_environment(mturk_client))
 
 
 def create_hit_type(title,
                     description,
-                    reward,
-                    lifetime,
-                    assignment_duration,
-                    max_assignments=None,
+                    reward=None,
+                    reward_cents=None,
+                    assignment_duration=None,
                     auto_approval_delay=None,
                     keywords=None,
                     qualification_requirements=None,
@@ -273,13 +334,13 @@ def create_hit_type(title,
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
-        'lifetime': 'LifetimeInSeconds',
         'assignment_duration': 'AssignmentDurationInSeconds',
-        'max_assignments': 'MaxAssignments',
         'auto_approval_delay': 'AutoApprovalDelayInSeconds',
         'keywords': 'Keywords',
         'qualification_requirements': 'QualificationRequirements'
     })
+    if reward_cents:
+        params['Reward'] = str(reward_cents / 100)
     return mturk_client.create_hit_type(**params).get('HITTypeId')
 
 
@@ -571,23 +632,25 @@ def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=No
     :return: A string value that can be placed in the RequesterAnnotation field
     """
     s3_resource = s3_resource if s3_resource else s3.resource
-    payload_string = json.dumps(payload, separators=(',', ':')) if type(payload) == dict else payload
 
-    # Use the annotation 'as is' if possible
-    if len(payload_string) < 243:
-        return json.dumps({'payload': payload}, separators=(',', ':'))
+    if isinstance(payload, Mapping):
+        payload = utils.json_dumps(payload, separators=(',', ':'))
 
-    else:
-        # Attempt to compress it
-        compressed = str(base64.b85encode(zlib.compress(payload_string.encode())), 'utf-8')
-        if len(compressed) < 238:
-            return json.dumps({'payloadBytes': compressed}, separators=(',', ':'))
-
+    if isinstance(payload, str):
+        if len(payload) <= 255:
+            return payload
         else:
-            # Else post it to s3
-            uri = s3.write_temp_object(payload, 'mturk_requester_annotation/', s3_resource=s3_resource,
-                                       bucket_identifier=bucket_identifier)
-            return json.dumps({'payloadURI': uri}, separators=(',', ':'))
+            # Attempt to compress it
+            compressed = str(base64.b85encode(zlib.compress(payload.encode())), 'utf-8')
+            if len(compressed) < 238:
+                return json.dumps({'payloadBytes': compressed}, separators=(',', ':'))
+            else:
+                # Else post it to s3
+                uri = s3.write_temp_object(payload, 'mturk_requester_annotation/', s3_resource=s3_resource,
+                                           bucket_identifier=bucket_identifier)
+                return json.dumps({'payloadURI': uri}, separators=(',', ':'))
+    else:
+        raise Exception('Annotation value must be a string or dict')
 
 
 def retrieve_requester_annotation(hit_id, delete_temp_file=False, s3_resource=None, mturk_client=None):
@@ -610,7 +673,7 @@ def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None
     s3_resource = s3_resource if s3_resource else s3.resource
     if content and len(content) > 0:
         try:
-            content = json.loads(content)
+            content = utils.json_loads(content)
             if 'payload' in content:
                 return content['payload']
             elif 'payloadBytes' in content:
@@ -618,7 +681,7 @@ def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None
             elif 'payloadURI' in content:
                 results = s3.read_dict(uri=content['payloadURI'], s3_resource=s3_resource)
                 if delete_temp_file:
-                    s3.delete_object(uri=content['payloadURI'], s3_resource=s3_resource)
+                    s3.delete(uri=content['payloadURI'], s3_resource=s3_resource)
                 return results
             else:
                 return content

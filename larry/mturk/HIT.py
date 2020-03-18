@@ -30,7 +30,18 @@ class HIT(collections.UserDict):
         return "{}('{}')".format(type(self).__name__, self.hit_id)
 
     def __str__(self):
-        return "<{}: {}>".format(self.hit_id, self.status)
+        return """{}:
+    Production: {}
+    Title: {}
+    HIT Type: {}
+    HIT Group: {}
+    Status: {}
+    Review Status: {}
+    Reward: {}
+    Pending: {}
+    Available: {}
+    Completed: {}""".format(self.hit_id, self.production, self.title, self.hit_type_id, self.hit_group_id,
+                            self.status, self.review_status, self.reward, self.pending, self.available, self.completed)
 
     def refresh(self, get_assignments=False):
         self.update(mturk._get_hit(self.hit_id, self.__client)[0])
@@ -161,6 +172,13 @@ class HIT(collections.UserDict):
     @property
     def preview(self):
         return mturk.preview_url(self.hit_type_id, self.production)
+
+    @property
+    def completed_assignment_count(self):
+        if 'Assignments' in self:
+            return len(self['Assignments'])
+        else:
+            return 0
 
     def expire(self):
         mturk.expire_hit(self.hit_id, self.__client)

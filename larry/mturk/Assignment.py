@@ -13,7 +13,7 @@ class Assignment(collections.UserDict):
         else:
             self.update(data)
             self._parse_datetime_values()
-        if isinstance(self['Answer'], str):
+        if isinstance(self.get('Answer'), str):
             self['Answer'] = mturk.parse_answers(self['Answer'])
         if 'SubmitTime' in self and 'AcceptTime' in self:
             self['WorkTime'] = round((self['SubmitTime'] - self['AcceptTime']).total_seconds())
@@ -30,7 +30,14 @@ class Assignment(collections.UserDict):
         return "{}('{}')".format(type(self).__name__, self.assignment_id)
 
     def __str__(self):
-        return "<{}: {}>".format(self.assignment_id, self.status)
+        return """{}:
+   Status: {}
+   Worker: {}
+   HIT: {}
+   Accept Time: {}
+   Work Time: {}
+   Answer: {}""".format(self.assignment_id, self.status, self.worker_id, self.hit_id, self.accept_time,
+                       self.work_time, self.answer)
 
     def refresh(self):
         self.update(mturk._get_assignment(self.assignment_id, self.__client)[0])
