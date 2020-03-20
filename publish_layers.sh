@@ -102,3 +102,5 @@ rm -r layer
 rm layer.zip
 rm layerjinja.zip
 rm layerjinjapillow.zip
+
+./update_readme.sh

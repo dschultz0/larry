@@ -1,7 +1,7 @@
 # Larry
 Larry is a library of utilities for common data tasks using AWS for data science and data engineering projects. 
 While boto3 is a great interface for interacting with AWS services, it can be overly complex for data scientists and 
-others who want to perform straightforward operations on data. Boto3 is powerful but often requires you spend time
+others who want to perform straightforward operations on data. Rather than spend time
 worrying about API-specific interactions and parameters. Larry makes it easy to use services like S3, MTurk, 
 and other data-oriented AWS services in a far more **functional** manner to let you focus on the data rather than 
 syntax. This library is designed to make getting tasks completed in Jupyter Notebooks or AWS Lambda functions as 
@@ -89,22 +89,20 @@ import larry as lry
 # Indicate we want to use the production environment
 lry.mturk.use_production()
 
-# Load a template from S3 and populate it with values
+# Identify the task template we want to use and the parameters we'll populate in the template
+template_uri = 's3://mybucket/templates/imageCat.html'
 task_data = {'image_url': 'https://mywebsite.com/images/233.jpg'}
-question_xml = lry.mturk.render_jinja_template_question(task_data, template_uri='s3://mybucket/templates/imageCat.html')
 
-# Format the source data so it can be stored in the RequesterAnnotation field for use in tracking
+# Add some tracking information we can pass through in our RequesterAnnotation
 task_data['request_id'] = 'MY_TRACKING_ID'
-annotation_payload = lry.mturk.prepare_requester_annotation(task_data)
 
 # Create a HIT
-hit = lry.mturk.create_hit(title='Test task', description='Categorize images', reward='0.05', max_assignments=5,
-                       lifetime=86400, assignment_duration=600, question=question_xml, annotation=annotation_payload)
+hit = lry.mturk.create_hit(title='Test task', description='Categorize images', 
+                           reward_cents=5, max_assignments=5, lifetime=86400, assignment_duration=600, 
+                           question_template_uri=template_uri, template_context=task_data, annotation=task_data)
 
 # Display where the HIT can be viewed on the Worker website
-hit_id = hit['HITId']
-hit_type_id = hit['HITTypeId']
-print('HIT {} created, preview at {}'.format(hit_id, lry.mturk.preview_url(hit_type_id)))
+print('HIT {} created, preview at {}'.format(hit.hit_id, hit.preview))
 ```
 Getting the results from that task is as simple as the following:
 ```python
@@ -119,11 +117,11 @@ lry.mturk.use_production()
 hit = lry.mturk.get_hit(hit_id)
 
 # retrieve the requester annotation data
-task_data = lry.mturk.retrieve_requester_annotation(hit=hit)
+task_data = hit.annotation
 
 # get the results
-for assignment in lry.mturk.list_assignments_for_hit(hit_id):
-    print('Worker {} responded with {}'.format(assignment['WorkerId'], assignment['Answer']['category']))
+for assignment in hit.assignments:
+    print('Worker {} responded with {}'.format(assignment.worker_id, assignment.answer['category']))
 ```
 
 More features will be added over time, feel free to submit your feature suggestions.
