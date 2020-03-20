@@ -14,13 +14,13 @@ pip install larry
 ```
 In addition, you can add Larry to your AWS Lambda functions by adding one of the following public Layers:
 * us-east-1:
-    * Larry: `arn:aws:lambda:us-east-1:981332165467:layer:Larry:4`
-    * Larry with Jinja2: `arn:aws:lambda:us-east-1:981332165467:layer:LarryWithJinja:4`
-    * Larry with Jinja2 and Pillow: `arn:aws:lambda:us-east-1:981332165467:layer:LarryWithJinjaPillow:4`
+    * Larry: `arn:aws:lambda:us-east-1:981332165467:layer:Larry:5`
+    * Larry with Jinja2: `arn:aws:lambda:us-east-1:981332165467:layer:LarryWithJinja:5`
+    * Larry with Jinja2 and Pillow: `arn:aws:lambda:us-east-1:981332165467:layer:LarryWithJinjaPillow:5`
 * us-west-2:
-    * Larry: `arn:aws:lambda:us-west-2:981332165467:layer:Larry:4`
-    * Larry with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryWithJinja:4`
-    * Larry with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryWithJinjaPillow:4`
+    * Larry: `arn:aws:lambda:us-west-2:981332165467:layer:Larry:5`
+    * Larry with Jinja2: `arn:aws:lambda:us-west-2:981332165467:layer:LarryWithJinja:5`
+    * Larry with Jinja2 and Pillow: `arn:aws:lambda:us-west-2:981332165467:layer:LarryWithJinjaPillow:5`
 
 ## Configuring your AWS session
 By default Larry creates a boto3 session using your default AWS credentials that can be configured using the 
@@ -120,6 +120,7 @@ hit = lry.mturk.get_hit(hit_id)
 task_data = hit.annotation
 
 # get the results
+hit.retrieve_assignments()
 for assignment in hit.assignments:
     print('Worker {} responded with {}'.format(assignment.worker_id, assignment.answer['category']))
 ```

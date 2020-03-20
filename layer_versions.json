@@ -1,8 +1,8 @@
 {
-  "us_east_1_base": 4,
-  "us_east_1_jinja": 4,
-  "us_east_1_pillow": 4,
-  "us_west_2_base": 4,
-  "us_west_2_jinja": 4,
-  "us_west_2_pillow": 4
+  "us_east_1_base": 5,
+  "us_east_1_jinja": 5,
+  "us_east_1_pillow": 5,
+  "us_west_2_base": 5,
+  "us_west_2_jinja": 5,
+  "us_west_2_pillow": 5
 }

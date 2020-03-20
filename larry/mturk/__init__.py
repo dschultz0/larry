@@ -25,6 +25,19 @@ __session = boto3.session.Session()
 PRODUCTION = 'production'
 SANDBOX = 'sandbox'
 
+NOTIFICATION_ASSIGNMENT_ACCEPTED = 'AssignmentAccepted'
+NOTIFICATION_ASSIGNMENT_ABANDONED = 'AssignmentAbandoned'
+NOTIFICATION_ASSIGNMENT_RETURNED = 'AssignmentReturned'
+NOTIFICATION_ASSIGNMENT_SUBMITTED = 'AssignmentSubmitted'
+NOTIFICATION_ASSIGNMENT_REJECTED = 'AssignmentRejected'
+NOTIFICATION_ASSIGNMENT_APPROVED = 'AssignmentApproved'
+NOTIFICATION_HIT_CREATED = 'HITCreated'
+NOTIFICATION_HIT_EXTENDED = 'HITExtended'
+NOTIFICATION_HIT_DISPOSED = 'HITDisposed'
+NOTIFICATION_HIT_REVIEWABLE = 'HITReviewable'
+NOTIFICATION_HIT_EXPIRED = 'HITExpired'
+NOTIFICATION_PING = 'Ping'
+
 
 def set_session(aws_access_key_id=None, aws_secret_access_key=None, aws__session_token=None,
                 region_name=None, profile_name=None, boto_session=None):
