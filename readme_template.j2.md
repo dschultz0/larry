@@ -120,6 +120,7 @@ hit = lry.mturk.get_hit(hit_id)
 task_data = hit.annotation
 
 # get the results
+hit.retrieve_assignments()
 for assignment in hit.assignments:
     print('Worker {} responded with {}'.format(assignment.worker_id, assignment.answer['category']))
 ```
