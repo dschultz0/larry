@@ -605,12 +605,12 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
                 buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
             else:
                 buff.write(str(row) + newline)
-        return write(buff.getvalue(), bucket, key, uri, acl, content_type=content_type,
+        return write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                      content_encoding=content_encoding, content_language=content_language,
                      content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
                      redirect=redirect, tags=tags, s3_resource=s3_resource)
     elif value is None:
-        return write('', bucket, key, uri, acl, s3_resource=s3_resource, content_type=content_type,
+        return write('', bucket=bucket, key=key, uri=uri, acl=acl, s3_resource=s3_resource, content_type=content_type,
                      content_encoding=content_encoding, content_language=content_language,
                      content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
                      redirect=redirect, tags=tags)
@@ -678,8 +678,8 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
 
 
 @__load_resource
-def rename_object(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key=None, new_uri=None,
-                  s3_resource=None):
+def rename(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key=None, new_uri=None,
+           s3_resource=None):
     """
     Renames an object in S3.
     :param old_bucket: Source bucket
@@ -691,6 +691,7 @@ def rename_object(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, 
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: None
     """
+    # TODO: Add support for passing location without parameter names
     if old_uri:
         (old_bucket, old_key) = decompose_uri(old_uri)
     if new_uri:
@@ -705,25 +706,26 @@ def rename_object(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, 
 
 
 @__load_resource
-def copy_object(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key=None, new_uri=None,
-                s3_resource=None):
+def copy(src_bucket=None, src_key=None, src_uri=None, new_bucket=None, new_key=None, new_uri=None,
+         s3_resource=None):
     """
     Copies an object in S3.
-    :param old_bucket: Source bucket
-    :param old_key: Source key
-    :param old_uri: An s3:// path containing the bucket and key of the source object
+    :param src_bucket: Source bucket
+    :param src_key: Source key
+    :param src_uri: An s3:// path containing the bucket and key of the source object
     :param new_bucket: Target bucket
     :param new_key: Target key
     :param new_uri: An s3:// path containing the bucket and key of the source object
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: None
     """
-    if old_uri:
-        (old_bucket, old_key) = decompose_uri(old_uri)
+    # TODO: Add support for passing location without parameter names
+    if src_uri:
+        (src_bucket, src_key) = decompose_uri(src_uri)
     if new_uri:
         (new_bucket, new_key) = decompose_uri(new_uri)
     s3_resource = s3_resource if s3_resource else resource
-    s3_resource.meta.client.copy({'Bucket': old_bucket, 'Key': old_key}, new_bucket, new_key)
+    s3_resource.meta.client.copy({'Bucket': src_bucket, 'Key': src_key}, new_bucket, new_key)
 
 
 @__load_resource

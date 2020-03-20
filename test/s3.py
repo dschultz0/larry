@@ -1,12 +1,17 @@
 import unittest
 import larry as lry
+from larry.types import Box
+from larry.utils import json_dumps
+import datetime
 from botocore.exceptions import ClientError
 
 # S3 testing objects
 SIMPLE_DICT = {
     'a': {'key': 'value'},
     'b': ['a', 'b', 'c'],
-    '1': 15
+    '1': 15,
+    'box': Box.from_coords([3,4,5,6]),
+    'date': datetime.datetime.now()
 }
 SIMPLE_LIST_OF_DICTS = [
     {'a': 124, 'b': 'value'},
@@ -101,53 +106,126 @@ class S3Tests(unittest.TestCase):
         self.assertGreater(lry.s3.get_size(bucket=BUCKET, key=KEY), 10000)
 
     def test_readwrite_dict(self):
-        dict_uri = ld.s3.write_temp_object(SIMPLE_DICT, prefix)
-        self.assertEqual(ld.s3.read_dict(uri=dict_uri), SIMPLE_DICT)
+        key = PATH_PREFIX + 'dict.json'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        dict_uri = lry.s3.write_object(SIMPLE_DICT, BUCKET, key)
+        self.assertEqual(json_dumps(lry.s3.read_dict(BUCKET, key)), json_dumps(SIMPLE_DICT))
+        lry.s3.delete(dict_uri)
+        dict_uri = lry.s3.write_object(SIMPLE_DICT, bucket=BUCKET, key=key)
+        self.assertEqual(json_dumps(lry.s3.read_dict(bucket=BUCKET, key=key)), json_dumps(SIMPLE_DICT))
+        lry.s3.delete(dict_uri)
+        dict_uri = lry.s3.write_object(SIMPLE_DICT, uri)
+        self.assertEqual(json_dumps(lry.s3.read_dict(uri)), json_dumps(SIMPLE_DICT))
+        lry.s3.delete(dict_uri)
+        dict_uri = lry.s3.write_object(SIMPLE_DICT, uri=uri)
+        self.assertEqual(json_dumps(lry.s3.read_dict(uri=uri)), json_dumps(SIMPLE_DICT))
+        lry.s3.delete(dict_uri)
 
     def test_readwrite_list_of_dict(self):
-        listofdicts_uri = ld.s3.write_temp_object(SIMPLE_LIST_OF_DICTS, prefix)
-        self.assertEqual(ld.s3.read_list_of_dict(uri=listofdicts_uri), SIMPLE_LIST_OF_DICTS)
+        def list_dump(l):
+            return [json_dumps(i) for i in l]
+        key = PATH_PREFIX + 'dictlist.jsonl'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, BUCKET, key)
+        self.assertEqual(list_dump(lry.s3.read_list_of_dict(BUCKET, key)), list_dump(SIMPLE_LIST_OF_DICTS))
+        lry.s3.delete(dictlist_uri)
+        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, bucket=BUCKET, key=key)
+        self.assertEqual(list_dump(lry.s3.read_list_of_dict(bucket=BUCKET, key=key)), list_dump(SIMPLE_LIST_OF_DICTS))
+        lry.s3.delete(dictlist_uri)
+        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, uri)
+        self.assertEqual(list_dump(lry.s3.read_list_of_dict(uri)), list_dump(SIMPLE_LIST_OF_DICTS))
+        lry.s3.delete(dictlist_uri)
+        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, uri=uri)
+        self.assertEqual(list_dump(lry.s3.read_list_of_dict(uri=uri)), list_dump(SIMPLE_LIST_OF_DICTS))
+        lry.s3.delete(dictlist_uri)
 
     def test_readwrite_list(self):
-        list_uri = ld.s3.write_temp_object(SIMPLE_LIST, prefix)
-        self.assertEqual(ld.s3.read_list_of_str(uri=list_uri), SIMPLE_LIST)
+        key = PATH_PREFIX + 'list.txt'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        list_uri = lry.s3.write_object(SIMPLE_LIST, BUCKET, key)
+        self.assertEqual(lry.s3.read_list_of_str(BUCKET, key), SIMPLE_LIST)
+        lry.s3.delete(list_uri)
+        list_uri = lry.s3.write_object(SIMPLE_LIST, bucket=BUCKET, key=key)
+        self.assertEqual(lry.s3.read_list_of_str(bucket=BUCKET, key=key), SIMPLE_LIST)
+        lry.s3.delete(list_uri)
+        list_uri = lry.s3.write_object(SIMPLE_LIST, uri)
+        self.assertEqual(lry.s3.read_list_of_str(uri), SIMPLE_LIST)
+        lry.s3.delete(list_uri)
+        list_uri = lry.s3.write_object(SIMPLE_LIST, uri=uri)
+        self.assertEqual(lry.s3.read_list_of_str(uri=uri), SIMPLE_LIST)
+        lry.s3.delete(list_uri)
 
     def test_readwrite_string(self):
-        string_uri = ld.s3.write_temp_object(SIMPLE_STRING, prefix)
-        self.assertEqual(ld.s3.read_str(uri=string_uri), SIMPLE_STRING)
+        key = PATH_PREFIX + 'string.txt'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        string_uri = lry.s3.write_object(SIMPLE_STRING, BUCKET, key)
+        self.assertEqual(lry.s3.read_str(BUCKET, key), SIMPLE_STRING)
+        lry.s3.delete(string_uri)
+        string_uri = lry.s3.write_object(SIMPLE_STRING, bucket=BUCKET, key=key)
+        self.assertEqual(lry.s3.read_str(bucket=BUCKET, key=key), SIMPLE_STRING)
+        lry.s3.delete(string_uri)
+        string_uri = lry.s3.write_object(SIMPLE_STRING, uri)
+        self.assertEqual(lry.s3.read_str(uri), SIMPLE_STRING)
+        lry.s3.delete(string_uri)
+        string_uri = lry.s3.write_object(SIMPLE_STRING, uri=uri)
+        self.assertEqual(lry.s3.read_str(uri=uri), SIMPLE_STRING)
+        lry.s3.delete(string_uri)
 
-    def test_rename_object(self):
-        dict_uri = ld.s3.write_temp_object(SIMPLE_DICT, prefix)
-        temp_bucket, src_key = ld.s3.decompose_uri(dict_uri)
-        ld.s3.rename_object(temp_bucket, src_key, temp_bucket, src_key + '.renamed')
-        new_uri = ld.s3.compose_uri(temp_bucket, src_key + '.renamed')
-        self.assertEqual(new_uri, dict_uri+'.renamed')
+    def test_rename(self):
+        key1 = PATH_PREFIX + 'string1.txt'
+        key2 = PATH_PREFIX + 'string2.txt'
+        uri1 = lry.s3.compose_uri(BUCKET, key1)
+        uri2 = lry.s3.compose_uri(BUCKET, key2)
+        lry.s3.write_object(SIMPLE_STRING, BUCKET, key1)
+        lry.s3.rename(old_bucket=BUCKET, old_key=key1, new_bucket=BUCKET, new_key=key2)
+        self.assertEqual(lry.s3.read_str(bucket=BUCKET, key=key2), SIMPLE_STRING)
+        lry.s3.delete(BUCKET, key2)
+        lry.s3.write_object(SIMPLE_STRING, uri1)
+        lry.s3.rename(old_uri=uri1, new_uri=uri2)
+        self.assertEqual(lry.s3.read_str(uri2), SIMPLE_STRING)
+        lry.s3.delete(uri2)
 
-    def test_object_exists(self):
-        dict_uri = ld.s3.write_temp_object(SIMPLE_DICT, prefix)
-        self.assertTrue(ld.s3.object_exists(uri=dict_uri))
+    def test_copy(self):
+        key1 = PATH_PREFIX + 'string1.txt'
+        key2 = PATH_PREFIX + 'string2.txt'
+        uri1 = lry.s3.compose_uri(BUCKET, key1)
+        uri2 = lry.s3.compose_uri(BUCKET, key2)
+        lry.s3.write_object(SIMPLE_STRING, BUCKET, key1)
+        lry.s3.copy(src_bucket=BUCKET, src_key=key1, new_bucket=BUCKET, new_key=key2)
+        self.assertEqual(lry.s3.read_str(bucket=BUCKET, key=key1), lry.s3.read_str(bucket=BUCKET, key=key2))
+        lry.s3.delete(BUCKET, key2)
+        lry.s3.write_object(SIMPLE_STRING, uri1)
+        lry.s3.copy(src_uri=uri1, new_uri=uri2)
+        self.assertEqual(lry.s3.read_str(uri1), lry.s3.read_str(uri2))
+        lry.s3.delete(uri2)
+        lry.s3.delete(uri1)
 
-    def test_list_and_delete(self):
-        dict_uri = ld.s3.write_temp_object(SIMPLE_DICT, prefix)
-        temp_bucket, src_key = ld.s3.decompose_uri(dict_uri)
-        for key in ld.s3.list_objects(temp_bucket, prefix):
-            ld.s3.delete_object(temp_bucket, key)
-        objects = list(ld.s3.list_objects(temp_bucket, prefix))
-        self.assertEqual(len(objects),0)
+    def test_exists(self):
+        self.assertTrue(lry.s3.exists(BUCKET, KEY))
+        self.assertFalse(lry.s3.exists(BUCKET, KEY[:-1]))
+        self.assertTrue(lry.s3.exists(bucket=BUCKET, key=KEY))
+        self.assertFalse(lry.s3.exists(bucket=BUCKET, key=KEY[:-1]))
+        self.assertTrue(lry.s3.exists(URI))
+        self.assertFalse(lry.s3.exists(URI[:-1]))
+        self.assertTrue(lry.s3.exists(uri=URI))
+        self.assertFalse(lry.s3.exists(uri=URI[:-1]))
 
     def test_fetch(self):
-        fetched_uri = ld.s3.fetch(IMAGE_URL, bucket=temp_bucket, key=prefix + 'fetched.jpg')
-        image = ld.s3.read_pillow_image(uri=fetched_uri)
-        image_uri = ld.s3.write_pillow_image(image, 'JPEG', uri=fetched_uri + '.rewritten.jpg')
-        image2 = ld.s3.read_pillow_image(uri=image_uri)
-        ld.s3.download_to_temp(uri=image_uri)
-        image_url = ld.s3.make_public(uri=image_uri)
-        fetched_uri2 = ld.s3.fetch(image_url, bucket=temp_bucket, key=prefix + 'fetched2.jpg')
-        image3 = ld.s3.read_pillow_image(uri=fetched_uri2)
-        ld.s3.delete_object(uri=fetched_uri)
-        ld.s3.delete_object(uri=image_uri)
-        ld.s3.delete_object(uri=fetched_uri2)
-        image3
+        key = PATH_PREFIX + 'fetched.jpg'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        image_uri = lry.s3.fetch(IMAGE_URL, BUCKET, key)
+        self.assertTrue(lry.s3.exists(BUCKET, key))
+        lry.s3.delete(image_uri)
+        image_uri = lry.s3.fetch(IMAGE_URL, bucket=BUCKET, key=key)
+        self.assertTrue(lry.s3.exists(BUCKET, key))
+        lry.s3.delete(image_uri)
+        image_uri = lry.s3.fetch(IMAGE_URL, uri)
+        self.assertTrue(lry.s3.exists(uri))
+        lry.s3.delete(image_uri)
+        image_uri = lry.s3.fetch(IMAGE_URL, uri=uri)
+        self.assertTrue(lry.s3.exists(uri))
+        lry.s3.delete(image_uri)
+
 
 if __name__ == '__main__':
     unittest.main()
