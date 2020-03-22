@@ -585,15 +585,15 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
     # JSON
     if isinstance(value, Mapping):
         return write_as(value, types.TYPE_DICT, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                 content_type=content_type, content_encoding=content_encoding,
-                 content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                 storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
+                        content_type=content_type, content_encoding=content_encoding,
+                        content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                        storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
     # Text
     elif isinstance(value, str):
         return write_as(value, types.TYPE_STRING, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                 content_type=content_type, content_encoding=content_encoding,
-                 content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                 storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
+                        content_type=content_type, content_encoding=content_encoding,
+                        content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                        storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
 
     # List
     elif isinstance(value, list):
@@ -619,9 +619,10 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
         # TODO: Rethink this, perhaps check for attributes first rather than try/fail
         try:
             return write_as(value, types.TYPE_PILLOW_IMAGE, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                     content_type=content_type, content_encoding=content_encoding, content_language=content_language,
-                     content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                     redirect=redirect, tags=tags, s3_resource=s3_resource)
+                            content_type=content_type, content_encoding=content_encoding,
+                            content_language=content_language,
+                            content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                            redirect=redirect, tags=tags, s3_resource=s3_resource)
         except Exception:
             return write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                          content_encoding=content_encoding, content_language=content_language,
