@@ -57,6 +57,7 @@ class HIT(collections.UserDict):
                                                               s3_resource=s3_resource)
 
     def __missing__(self, key):
+        # TODO: Add support for accessing the properties as keys? hit['hit_id'] mapped to hit['HITId']
         if key == 'Assignments':
             self.retrieve_assignments()
             return self['Assignments']
