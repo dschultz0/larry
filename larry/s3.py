@@ -16,6 +16,7 @@ from zipfile import ZipFile
 from collections import Mapping
 import inspect
 import re
+from tempfile import TemporaryFile
 
 # Local S3 resource object
 resource = None
@@ -232,21 +233,32 @@ def read_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8'
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: An object representation of the data in S3
     """
-    objct = read(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
-    # TODO: Would a handler or local constant be a better idea here?
-    if o_type == types.TYPE_DICT:
-        return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
-    elif o_type == types.TYPE_STRING:
-        return objct.decode(encoding)
-    elif o_type == types.TYPE_PILLOW_IMAGE:
+    if o_type == types.TYPE_NP_ARRAY:
         try:
-            from PIL import Image
-            return Image.open(BytesIO(objct))
+            import numpy as np
+            with TemporaryFile() as fp:
+                download(fp, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
+                fp.seek(0)
+                return np.fromfile(fp)
         except ImportError as e:
-            # Simply raise the ImportError to let the user know this requires Pillow to function
+            # Simply raise the ImportError to let the user know this requires Numpy to function
             raise e
     else:
-        raise Exception('Unhandled type')
+        objct = read(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
+        # TODO: Would a handler or local constant be a better idea here?
+        if o_type == types.TYPE_DICT:
+            return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
+        elif o_type == types.TYPE_STRING:
+            return objct.decode(encoding)
+        elif o_type == types.TYPE_PILLOW_IMAGE:
+            try:
+                from PIL import Image
+                return Image.open(BytesIO(objct))
+            except ImportError as e:
+                # Simply raise the ImportError to let the user know this requires Pillow to function
+                raise e
+        else:
+            raise Exception('Unhandled type')
 
 
 @__load_resource
@@ -383,9 +395,9 @@ def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8
 
 @__load_resource
 @__decompose_location(require_key=True)
-def write(body, *location, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
-          content_language=None, content_length=None, metadata=None, sse=None, storage_class=None, redirect=None,
-          tags=None, s3_resource=None):
+def __write(body, *location, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
+            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None, 
+            tags=None, s3_resource=None):
     """
     Write an object to the bucket/key pair or uri.
     :param body: Data to write
@@ -402,8 +414,6 @@ def write(body, *location, bucket=None, key=None, uri=None, acl=None, content_ty
     :param metadata: A map of metadata to store with the object in S3.
     :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
     :param storage_class: The S3 storage class to store the object in.
-    :param redirect: If the bucket is configured as a website, redirects requests for this object to another object in
-    the same bucket or to an external URL.
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
@@ -418,13 +428,11 @@ def write(body, *location, bucket=None, key=None, uri=None, acl=None, content_ty
         'metadata': 'Metadata',
         'sse': 'ServerSideEncryption',
         'storage_class': 'StorageClass',
-        'redirect': 'WebsiteRedirectLocation'
     })
     if tags:
         params['Tagging'] = parse.urlencode(tags) if isinstance(tags, Mapping) else tags
 
-    objct = s3_resource.Bucket(bucket).Object(key=key)
-    objct.put(**params)
+    s3_resource.Bucket(bucket).Object(key=key).put(**params)
     return compose_uri(bucket, key)
 
 
@@ -453,7 +461,7 @@ extension_types = {
 @__decompose_location(require_key=True)
 def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
              columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-             content_length=None, metadata=None, sse=None, storage_class=None, redirect=None, tags=None,
+             content_length=None, metadata=None, sse=None, storage_class=None,  tags=None,
              s3_resource=None):
     """
     Write an object to the bucket/key pair (or uri), converting the python
@@ -477,8 +485,6 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
     :param metadata: A map of metadata to store with the object in S3.
     :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
     :param storage_class: The S3 storage class to store the object in.
-    :param redirect: If the bucket is configured as a website, redirects requests for this object to another object in
-    the same bucket or to an external URL.
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
@@ -545,17 +551,27 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
         objct = buff.getvalue()
     else:
         raise Exception('Unhandled type')
-    return write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                 content_encoding=content_encoding, content_language=content_language, content_length=content_length,
-                 metadata=metadata, sse=sse, storage_class=storage_class, redirect=redirect, tags=tags,
-                 s3_resource=s3_resource)
+    return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language, content_length=content_length,
+                   metadata=metadata, sse=sse, storage_class=storage_class, tags=tags,
+                   s3_resource=s3_resource)
 
 
 @__load_resource
 @__decompose_location(require_key=True)
 def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
                  content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-                 storage_class=None, redirect=None, tags=None, s3_resource=None):
+                 storage_class=None,  tags=None, s3_resource=None, **params):
+    return write(value, bucket=bucket, key=key, uri=uri, newline=newline, acl=acl, content_type=content_type,
+                 content_encoding=content_encoding, content_language=content_language, content_length=content_length,
+                 metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, s3_resource=s3_resource, **params)
+
+
+@__load_resource
+@__decompose_location(require_key=True)
+def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+          content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+          storage_class=None,  tags=None, s3_resource=None, **params):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -574,26 +590,23 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
     :param metadata: A map of metadata to store with the object in S3.
     :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
     :param storage_class: The S3 storage class to store the object in.
-    :param redirect: If the bucket is configured as a website, redirects requests for this object to another object in
-    the same bucket or to an external URL.
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
-    # TODO: Add support for pandas and numpy objects
     extension = key.split('.')[-1]
     # JSON
     if isinstance(value, Mapping):
         return write_as(value, types.TYPE_DICT, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                         content_type=content_type, content_encoding=content_encoding,
                         content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                        storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
+                        storage_class=storage_class, tags=tags, s3_resource=s3_resource)
     # Text
     elif isinstance(value, str):
         return write_as(value, types.TYPE_STRING, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                         content_type=content_type, content_encoding=content_encoding,
                         content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                        storage_class=storage_class, redirect=redirect, tags=tags, s3_resource=s3_resource)
+                        storage_class=storage_class, tags=tags, s3_resource=s3_resource)
 
     # List
     elif isinstance(value, list):
@@ -605,29 +618,62 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
                 buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
             else:
                 buff.write(str(row) + newline)
-        return write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                     content_encoding=content_encoding, content_language=content_language,
-                     content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                     redirect=redirect, tags=tags, s3_resource=s3_resource)
+        return __write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                       content_encoding=content_encoding, content_language=content_language,
+                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                       tags=tags, s3_resource=s3_resource)
+
+    elif isinstance(value, StringIO):
+        return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                       content_encoding=content_encoding, content_language=content_language,
+                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                       tags=tags, s3_resource=s3_resource)
+    elif isinstance(value, BytesIO):
+        value.seek(0)
+        return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                       content_encoding=content_encoding, content_language=content_language,
+                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                       tags=tags, s3_resource=s3_resource)
     elif value is None:
-        return write('', bucket=bucket, key=key, uri=uri, acl=acl, s3_resource=s3_resource, content_type=content_type,
-                     content_encoding=content_encoding, content_language=content_language,
-                     content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                     redirect=redirect, tags=tags)
-    else:
-        # try to write it as an image
-        # TODO: Rethink this, perhaps check for attributes first rather than try/fail
+        return __write('', bucket=bucket, key=key, uri=uri, acl=acl, s3_resource=s3_resource, content_type=content_type,
+                       content_encoding=content_encoding, content_language=content_language,
+                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                       tags=tags)
+
+    # primarily for Pillow images
+    elif hasattr(value, 'save') and callable(getattr(value, 'save', None)):
         try:
-            return write_as(value, types.TYPE_PILLOW_IMAGE, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                            content_type=content_type, content_encoding=content_encoding,
-                            content_language=content_language,
-                            content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                            redirect=redirect, tags=tags, s3_resource=s3_resource)
-        except Exception:
-            return write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                         content_encoding=content_encoding, content_language=content_language,
-                         content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                         redirect=redirect, tags=tags, s3_resource=s3_resource)
+            objct = BytesIO()
+            value.save(objct, **params)
+            objct.seek(0)
+            if content_type is None:
+                content_type = extension_types.get(extension,
+                                                   extension_types.get(params.get('format','').lower(), 'image'))
+            return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                           content_encoding=content_encoding, content_language=content_language,
+                           content_length=content_length,
+                           metadata=metadata, sse=sse, storage_class=storage_class, tags=tags,
+                           s3_resource=s3_resource)
+        except Exception as e:
+            pass
+
+    # primarily for numpy arrays
+    elif hasattr(value, 'tofile') and callable(getattr(value, 'tofile', None)):
+        try:
+            with TemporaryFile() as fp:
+                value.tofile(fp, **params)
+                fp.seek(0)
+                return upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                              content_encoding=content_encoding, content_language=content_language,
+                              content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                              tags=tags, s3_resource=s3_resource)
+        except Exception as e:
+            pass
+
+    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags, s3_resource=s3_resource)
 
 
 def _array_to_string(row, delimiter, indices=None):
@@ -643,12 +689,13 @@ def _array_to_string(row, delimiter, indices=None):
 @__decompose_location(require_key=True)
 def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
                     columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-                    content_length=None, metadata=None, sse=None, storage_class=None, redirect=None, tags=None,
+                    content_length=None, metadata=None, sse=None, storage_class=None,  tags=None,
                     s3_resource=None):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
     :param rows: List of data to write, rows can be of type list, dict or str
+    :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
@@ -665,8 +712,6 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
     :param metadata: A map of metadata to store with the object in S3.
     :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
     :param storage_class: The S3 storage class to store the object in.
-    :param redirect: If the bucket is configured as a website, redirects requests for this object to another object in
-    the same bucket or to an external URL.
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
@@ -674,7 +719,7 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
     return write_as(rows, types.TYPE_DELIMITED, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                     delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
                     content_encoding=content_encoding, content_language=content_language, content_length=content_length,
-                    metadata=metadata, sse=sse, storage_class=storage_class, redirect=redirect, tags=tags,
+                    metadata=metadata, sse=sse, storage_class=storage_class, tags=tags,
                     s3_resource=s3_resource)
 
 
@@ -734,6 +779,7 @@ def copy(src_bucket=None, src_key=None, src_uri=None, new_bucket=None, new_key=N
 def exists(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Checks to see if an object with the given bucket/key (or uri) exists.
+    :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for the object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
@@ -802,6 +848,7 @@ def compose_uri(bucket, key=None):
 def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_objects=False, s3_resource=None):
     """
     Returns a list of the object keys in the provided bucket that begin with the provided prefix.
+    :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket to query
     :param prefix: The key prefix to use in searching the bucket
     :param uri: An s3:// path containing the bucket and prefix
@@ -887,6 +934,7 @@ def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl
     """
     Retrieves the data defined by a URL to an S3 location.
     :param url: URL to retrieve
+    :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for the object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
@@ -896,15 +944,16 @@ def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl
     """
     req = Request(url, **kwargs)
     with request.urlopen(req) as response:
-        return write(response.read(), bucket=bucket, key=key, s3_resource=s3_resource, acl=acl)
+        return __write(response.read(), bucket=bucket, key=key, s3_resource=s3_resource, acl=acl)
 
 
 @__load_resource
 @__decompose_location(require_key=True)
-def download(directory, *location, bucket=None, key=None, uri=None, use_threads=True, s3_resource=None):
+def download(file, *location, bucket=None, key=None, uri=None, use_threads=True, s3_resource=None):
     """
     Downloads the an S3 object to a directory on the local file system.
-    :param directory: The directory to download the object to
+    :param file: The file or directory to download the object to
+    :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
@@ -913,15 +962,15 @@ def download(directory, *location, bucket=None, key=None, uri=None, use_threads=
     :return: Path of the local file
     """
     config = TransferConfig(use_threads=use_threads)
-    s3_object_local = os.path.join(directory, key.split('/')[-1])
-    try:
-        s3_resource.Bucket(bucket).download_file(key, s3_object_local, Config=config)
-    except botocore.exceptions.ClientError as e:
-        if e.response['Error']['Code'] == "404":
-            print("The object does not exist.")
-        else:
-            raise
-    return s3_object_local
+    objct = s3_resource.Bucket(bucket).Object(key)
+    if isinstance(file, str):
+        if os.path.isdir(file):
+            file = os.path.join(file, key.split('/')[-1])
+        objct.download_file(file, Config=config)
+    else:
+        objct.download_fileobj(file, Config=config)
+
+    return file
 
 
 @__load_resource
@@ -929,36 +978,42 @@ def download(directory, *location, bucket=None, key=None, uri=None, use_threads=
 def download_to_temp(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Downloads the an S3 object to a temp directory on the local file system.
+    :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
-    :return: Path of the local file
+    :return: A file pointer to the temp file
     """
-    temp_dir = _create_temp_dir()
-    file = os.path.join(temp_dir, key.split('/')[-1])
-    if not os.path.isfile(file):
-        print('starting download')
-        download(temp_dir, bucket, key, use_threads=True, s3_resource=s3_resource)
-        print('download complete')
-    return file
-
-
-def _create_temp_dir():
-    """
-    Creates a temp directory in the current path.
-    :return: The path of the temp directory
-    """
-    _temp_dir = os.getcwd() + "/temp"
-    if not os.path.isdir(_temp_dir):
-        os.makedirs(_temp_dir)
-    return _temp_dir
+    fp = TemporaryFile()
+    download(fp, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
+    fp.seek(0)
+    return fp
 
 
 @__load_resource
 @__decompose_location(require_key=True)
-def upload(file_name, *location, bucket=None, key=None, uri=None, s3_resource=None):
-    s3_resource.Bucket(bucket).upload_file(file_name, key)
+def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
+           content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
+           tags=None, s3_resource=None):
+    extra = utils.map_parameters(locals(), {
+        'acl': 'ACL',
+        'content_encoding': 'ContentEncoding',
+        'content_language': 'ContentLanguage',
+        'content_length': 'ContentLength',
+        'content_type': 'ContentType',
+        'metadata': 'Metadata',
+        'sse': 'ServerSideEncryption',
+        'storage_class': 'StorageClass',
+    })
+    if tags:
+        extra['Tagging'] = parse.urlencode(tags) if isinstance(tags, Mapping) else tags
+    params = {} if len(extra.keys()) == 0 else {'ExtraArgs': extra}
+    objct = s3_resource.Bucket(bucket).Object(key)
+    if isinstance(file, str):
+        objct.upload_file(file, **params)
+    else:
+        objct.upload_fileobj(file, **params)
     return compose_uri(bucket, key)
 
 
@@ -981,7 +1036,7 @@ def write_temp_object(value, prefix, acl=None, s3_resource=None, bucket_identifi
     if bucket is None:
         bucket = get_temp_bucket(region=region, bucket_identifier=bucket_identifier, s3_resource=s3_resource)
     key = prefix + str(uuid.uuid4())
-    return write_object(value, bucket=bucket, key=key, acl=acl, s3_resource=s3_resource)
+    return write(value, bucket=bucket, key=key, acl=acl, s3_resource=s3_resource)
 
 
 @__load_resource

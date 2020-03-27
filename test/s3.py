@@ -4,6 +4,7 @@ from larry.types import Box
 from larry.utils import json_dumps
 import datetime
 from botocore.exceptions import ClientError
+import numpy as np
 
 # S3 testing objects
 SIMPLE_DICT = {
@@ -20,6 +21,8 @@ SIMPLE_LIST_OF_DICTS = [
 ]
 SIMPLE_LIST = ['a', 'b', 'c', '3', 'd', '2', 'e', '1']
 SIMPLE_STRING = 'foobar'
+NUMPY_SHAPE = (30,40)
+NUMPY_ARRAY = np.random.rand(*NUMPY_SHAPE)
 IMAGE_URL = 'https://hilltop-demo.s3-us-west-2.amazonaws.com/images/1557026914963.jpg'
 BUCKET = 'larry-testing'
 KEY = 'test-objects/s3/1557026914963.jpg'
@@ -63,36 +66,35 @@ class S3Tests(unittest.TestCase):
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
     def test_delete_multiple(self):
-        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
-        print(uris)
+        uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
         lry.s3.delete(uris)
         o = lry.s3.obj(uris[3])
         with self.assertRaises(ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
-        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
         lry.s3.delete(uri=uris)
-        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
         bucket = lry.s3.decompose_uri(uris[0])[0]
         keys = [lry.s3.decompose_uri(uri)[1] for uri in uris]
         lry.s3.delete(bucket, keys)
-        uris = [lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
-                lry.s3.write_object(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
+        uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
+                lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
         lry.s3.delete(bucket=bucket, key=keys)
         o = lry.s3.obj(uris[4])
         with self.assertRaises(ClientError) as context:
@@ -108,16 +110,16 @@ class S3Tests(unittest.TestCase):
     def test_readwrite_dict(self):
         key = PATH_PREFIX + 'dict.json'
         uri = lry.s3.compose_uri(BUCKET, key)
-        dict_uri = lry.s3.write_object(SIMPLE_DICT, BUCKET, key)
+        dict_uri = lry.s3.write(SIMPLE_DICT, BUCKET, key)
         self.assertEqual(json_dumps(lry.s3.read_dict(BUCKET, key)), json_dumps(SIMPLE_DICT))
         lry.s3.delete(dict_uri)
-        dict_uri = lry.s3.write_object(SIMPLE_DICT, bucket=BUCKET, key=key)
+        dict_uri = lry.s3.write(SIMPLE_DICT, bucket=BUCKET, key=key)
         self.assertEqual(json_dumps(lry.s3.read_dict(bucket=BUCKET, key=key)), json_dumps(SIMPLE_DICT))
         lry.s3.delete(dict_uri)
-        dict_uri = lry.s3.write_object(SIMPLE_DICT, uri)
+        dict_uri = lry.s3.write(SIMPLE_DICT, uri)
         self.assertEqual(json_dumps(lry.s3.read_dict(uri)), json_dumps(SIMPLE_DICT))
         lry.s3.delete(dict_uri)
-        dict_uri = lry.s3.write_object(SIMPLE_DICT, uri=uri)
+        dict_uri = lry.s3.write(SIMPLE_DICT, uri=uri)
         self.assertEqual(json_dumps(lry.s3.read_dict(uri=uri)), json_dumps(SIMPLE_DICT))
         lry.s3.delete(dict_uri)
 
@@ -126,48 +128,48 @@ class S3Tests(unittest.TestCase):
             return [json_dumps(i) for i in l]
         key = PATH_PREFIX + 'dictlist.jsonl'
         uri = lry.s3.compose_uri(BUCKET, key)
-        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, BUCKET, key)
+        dictlist_uri = lry.s3.write(SIMPLE_LIST_OF_DICTS, BUCKET, key)
         self.assertEqual(list_dump(lry.s3.read_list_of_dict(BUCKET, key)), list_dump(SIMPLE_LIST_OF_DICTS))
         lry.s3.delete(dictlist_uri)
-        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, bucket=BUCKET, key=key)
+        dictlist_uri = lry.s3.write(SIMPLE_LIST_OF_DICTS, bucket=BUCKET, key=key)
         self.assertEqual(list_dump(lry.s3.read_list_of_dict(bucket=BUCKET, key=key)), list_dump(SIMPLE_LIST_OF_DICTS))
         lry.s3.delete(dictlist_uri)
-        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, uri)
+        dictlist_uri = lry.s3.write(SIMPLE_LIST_OF_DICTS, uri)
         self.assertEqual(list_dump(lry.s3.read_list_of_dict(uri)), list_dump(SIMPLE_LIST_OF_DICTS))
         lry.s3.delete(dictlist_uri)
-        dictlist_uri = lry.s3.write_object(SIMPLE_LIST_OF_DICTS, uri=uri)
+        dictlist_uri = lry.s3.write(SIMPLE_LIST_OF_DICTS, uri=uri)
         self.assertEqual(list_dump(lry.s3.read_list_of_dict(uri=uri)), list_dump(SIMPLE_LIST_OF_DICTS))
         lry.s3.delete(dictlist_uri)
 
     def test_readwrite_list(self):
         key = PATH_PREFIX + 'list.txt'
         uri = lry.s3.compose_uri(BUCKET, key)
-        list_uri = lry.s3.write_object(SIMPLE_LIST, BUCKET, key)
+        list_uri = lry.s3.write(SIMPLE_LIST, BUCKET, key)
         self.assertEqual(lry.s3.read_list_of_str(BUCKET, key), SIMPLE_LIST)
         lry.s3.delete(list_uri)
-        list_uri = lry.s3.write_object(SIMPLE_LIST, bucket=BUCKET, key=key)
+        list_uri = lry.s3.write(SIMPLE_LIST, bucket=BUCKET, key=key)
         self.assertEqual(lry.s3.read_list_of_str(bucket=BUCKET, key=key), SIMPLE_LIST)
         lry.s3.delete(list_uri)
-        list_uri = lry.s3.write_object(SIMPLE_LIST, uri)
+        list_uri = lry.s3.write(SIMPLE_LIST, uri)
         self.assertEqual(lry.s3.read_list_of_str(uri), SIMPLE_LIST)
         lry.s3.delete(list_uri)
-        list_uri = lry.s3.write_object(SIMPLE_LIST, uri=uri)
+        list_uri = lry.s3.write(SIMPLE_LIST, uri=uri)
         self.assertEqual(lry.s3.read_list_of_str(uri=uri), SIMPLE_LIST)
         lry.s3.delete(list_uri)
 
     def test_readwrite_string(self):
         key = PATH_PREFIX + 'string.txt'
         uri = lry.s3.compose_uri(BUCKET, key)
-        string_uri = lry.s3.write_object(SIMPLE_STRING, BUCKET, key)
+        string_uri = lry.s3.write(SIMPLE_STRING, BUCKET, key)
         self.assertEqual(lry.s3.read_str(BUCKET, key), SIMPLE_STRING)
         lry.s3.delete(string_uri)
-        string_uri = lry.s3.write_object(SIMPLE_STRING, bucket=BUCKET, key=key)
+        string_uri = lry.s3.write(SIMPLE_STRING, bucket=BUCKET, key=key)
         self.assertEqual(lry.s3.read_str(bucket=BUCKET, key=key), SIMPLE_STRING)
         lry.s3.delete(string_uri)
-        string_uri = lry.s3.write_object(SIMPLE_STRING, uri)
+        string_uri = lry.s3.write(SIMPLE_STRING, uri)
         self.assertEqual(lry.s3.read_str(uri), SIMPLE_STRING)
         lry.s3.delete(string_uri)
-        string_uri = lry.s3.write_object(SIMPLE_STRING, uri=uri)
+        string_uri = lry.s3.write(SIMPLE_STRING, uri=uri)
         self.assertEqual(lry.s3.read_str(uri=uri), SIMPLE_STRING)
         lry.s3.delete(string_uri)
 
@@ -176,11 +178,11 @@ class S3Tests(unittest.TestCase):
         key2 = PATH_PREFIX + 'string2.txt'
         uri1 = lry.s3.compose_uri(BUCKET, key1)
         uri2 = lry.s3.compose_uri(BUCKET, key2)
-        lry.s3.write_object(SIMPLE_STRING, BUCKET, key1)
+        lry.s3.write(SIMPLE_STRING, BUCKET, key1)
         lry.s3.rename(old_bucket=BUCKET, old_key=key1, new_bucket=BUCKET, new_key=key2)
         self.assertEqual(lry.s3.read_str(bucket=BUCKET, key=key2), SIMPLE_STRING)
         lry.s3.delete(BUCKET, key2)
-        lry.s3.write_object(SIMPLE_STRING, uri1)
+        lry.s3.write(SIMPLE_STRING, uri1)
         lry.s3.rename(old_uri=uri1, new_uri=uri2)
         self.assertEqual(lry.s3.read_str(uri2), SIMPLE_STRING)
         lry.s3.delete(uri2)
@@ -190,11 +192,11 @@ class S3Tests(unittest.TestCase):
         key2 = PATH_PREFIX + 'string2.txt'
         uri1 = lry.s3.compose_uri(BUCKET, key1)
         uri2 = lry.s3.compose_uri(BUCKET, key2)
-        lry.s3.write_object(SIMPLE_STRING, BUCKET, key1)
+        lry.s3.write(SIMPLE_STRING, BUCKET, key1)
         lry.s3.copy(src_bucket=BUCKET, src_key=key1, new_bucket=BUCKET, new_key=key2)
         self.assertEqual(lry.s3.read_str(bucket=BUCKET, key=key1), lry.s3.read_str(bucket=BUCKET, key=key2))
         lry.s3.delete(BUCKET, key2)
-        lry.s3.write_object(SIMPLE_STRING, uri1)
+        lry.s3.write(SIMPLE_STRING, uri1)
         lry.s3.copy(src_uri=uri1, new_uri=uri2)
         self.assertEqual(lry.s3.read_str(uri1), lry.s3.read_str(uri2))
         lry.s3.delete(uri2)
@@ -225,6 +227,26 @@ class S3Tests(unittest.TestCase):
         image_uri = lry.s3.fetch(IMAGE_URL, uri=uri)
         self.assertTrue(lry.s3.exists(uri))
         lry.s3.delete(image_uri)
+
+    def test_readwrite_numpy(self):
+        key = PATH_PREFIX + 'numpy.npy'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        numpy_uri = lry.s3.write(NUMPY_ARRAY, BUCKET, key)
+        np.testing.assert_array_equal(NUMPY_ARRAY,
+                                      lry.s3.read_as(lry.types.TYPE_NP_ARRAY, BUCKET, key).reshape(NUMPY_SHAPE))
+        lry.s3.delete(numpy_uri)
+        numpy_uri = lry.s3.write(NUMPY_ARRAY, bucket=BUCKET, key=key)
+        np.testing.assert_array_equal(NUMPY_ARRAY,
+                                      lry.s3.read_as(lry.types.TYPE_NP_ARRAY, bucket=BUCKET, key=key).reshape(NUMPY_SHAPE))
+        lry.s3.delete(numpy_uri)
+        numpy_uri = lry.s3.write(NUMPY_ARRAY, uri)
+        np.testing.assert_array_equal(NUMPY_ARRAY,
+                                      lry.s3.read_as(lry.types.TYPE_NP_ARRAY, uri).reshape(NUMPY_SHAPE))
+        lry.s3.delete(numpy_uri)
+        numpy_uri = lry.s3.write(NUMPY_ARRAY, uri=uri)
+        np.testing.assert_array_equal(NUMPY_ARRAY,
+                                      lry.s3.read_as(lry.types.TYPE_NP_ARRAY, uri=uri).reshape(NUMPY_SHAPE))
+        lry.s3.delete(numpy_uri)
 
 
 if __name__ == '__main__':
