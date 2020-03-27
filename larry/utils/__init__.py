@@ -53,6 +53,18 @@ def json_dumps(value, separators=None):
         return json.dumps(value, cls=JSONEncoder)
 
 
+def make_lambda_result_json_safe(value, encoder=JSONEncoder):
+    """
+    Because Lambda uses a default json encoder to serialize return values it will often fail when
+    returning user defined classes. This function will encode the object to JSON using the larry encoder
+    and then load it back into a standard object tree that Lambda will be able to encode.
+    :param value: The object to make safe
+    :param encoder: The encoder to use to encode user defined classes, defaults to the larry JSONEncoder
+    :return: An object with custom classes stripped out
+    """
+    return json.loads(json.dumps(value, cls=encoder))
+
+
 def date_to_string(obj):
     return obj.strftime(DATE_FORMAT)
 

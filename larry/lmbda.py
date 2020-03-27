@@ -160,7 +160,7 @@ def invoke_as(name, o_type, payload=None, invoke_type=TYPE_REQUEST_RESPONSE, log
     if o_type == types.TYPE_STRING:
         result = payload.read().decode('utf-8')
     elif o_type == types.TYPE_DICT:
-        result = json.loads(payload.read())
+        result = json.loads(payload.read(), object_hook=utils.JSONDecoder)
     else:
         raise Exception('Unhandled type')
     if logs:
