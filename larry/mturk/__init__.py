@@ -13,8 +13,8 @@ from larry import s3
 from larry.types import Box
 from collections import Mapping
 import datetime
+from larry.core.ipython import display_link, display_iframe
 import uuid
-import warnings
 from urllib.parse import urlencode
 
 # Local client
@@ -526,7 +526,15 @@ def preview_url(hit_type_id, production=None):
         return "https://workersandbox.mturk.com/mturk/preview?groupId={}".format(hit_type_id)
 
 
-# TODO: Create an enum for destination types
+def display_task_link(hit_type_id, production=None):
+    """
+    Display a link to the task group on the appropriate worker site.
+    :param hit_type_id: The HIT type
+    :param production: True if the request is for the production environment
+    """
+    display_link(preview_url(hit_type_id, production=production), 'Click to view the task')
+
+
 def add_notification(hit_type_id, destination, event_types, mturk_client=None):
     """
     Attaches a notification to the HIT type to send a message when various event_types occur
@@ -705,9 +713,9 @@ def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None
         return content
 
 
-def preview_task(url=None, template=None, template_uri=None, context=None, bucket=None,
-                 prefix='larry_mturk_task_preview/', worker_id=None, assignment_id=None, hit_id=None, preview=None,
-                 production=True, width=None, height=None):
+def display_task_preview(url=None, template=None, template_uri=None, context=None, bucket=None,
+                         prefix='larry_mturk_task_preview/', worker_id=None, assignment_id=None, hit_id=None,
+                         preview=None, production=True, width=None, height=600, link_only=False):
     """
     Opens the task to view within an iframe in your Jupyter environment. There are three modes to use of this
     preview: url, in-memory template, or s3 template. For the template modes, a template and context must be provided.
@@ -731,53 +739,46 @@ def preview_task(url=None, template=None, template_uri=None, context=None, bucke
     :param production: Indicate the turkSubmitTo value to pass (sandbox or production)
     :param width: Specifies the width of the iframe
     :param height: Specifies the height of the iframe
+    :param link_only: Only display a link to the task interface (don't render an iframe with the content); ignored
+    if an s3 bucket or url is not provided (in-memory viewing)
     :return:
     """
-    try:
-        from IPython.display import display, IFrame, HTML
 
-        # TODO: better default height and width
-        w = 900 if width is None else width
-        h = 600 if height is None else height
+    if url is None:
+        task = render_jinja_template(context, template=template, template_uri=template_uri)
+        if bucket is None:
+            if not (hit_id is None and assignment_id is None and worker_id is None and preview is None):
+                raise Exception('URL parameters can only be used with URL or S3 stored tasks')
+            display_iframe(html=task, width=width, height=height)
+            return
+        else:
+            uri = s3.write(task, bucket, prefix + str(uuid.uuid4()) + '.html', acl=s3.ACL_PUBLIC_READ)
+            url = s3.get_public_url(uri)
 
-        if url is None:
-            task = render_jinja_template(context, template=template, template_uri=template_uri)
-            if bucket is None:
-                if not (hit_id is None and assignment_id is None and worker_id is None and preview is None):
-                    raise Exception('URL parameters can only be used with URL or S3 stored tasks')
-                html = '<iframe width="{}" height="{}" srcdoc="{}" frameborder="0" allowfullscreen></iframe>'\
-                    .format(w, h, task.replace('"', '&quot;'))
-                # this will throw an irrelevant warning about considering the iframe element
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    display(HTML(html))
-                return
-            else:
-                uri = s3.write(task, bucket, prefix + str(uuid.uuid4()) + '.html', acl=s3.ACL_PUBLIC_READ)
-                url = s3.get_public_url(uri)
+    if url is None or len(url) == 0:
+        raise Exception('A url value or template must be provided')
 
-        if url is None or len(url) == 0:
-            raise Exception('A url value must be provided')
+    params = {}
+    if hit_id is not None:
+        params['hitId'] = hit_id
+    if worker_id is not None:
+        params['workerId'] = worker_id
+    if assignment_id is not None:
+        params['assignmentId'] = assignment_id
+    if preview:
+        params['assignmentId'] = 'ASSIGNMENT_ID_NOT_AVAILABLE'
+    if len(params.keys()) > 0:
+        params['turkSubmitTo'] = 'https://www.mturk.com/' if production else 'https://workersandbox.mturk.com'
+        if '?' in url:
+            url = url + "&" + urlencode(params)
+        else:
+            url = url + "?" + urlencode(params)
 
-        params = {}
-        if hit_id is not None:
-            params['hitId'] = hit_id
-        if worker_id is not None:
-            params['workerId'] = worker_id
-        if assignment_id is not None:
-            params['assignmentId'] = assignment_id
-        if preview:
-            params['assignmentId'] = 'ASSIGNMENT_ID_NOT_AVAILABLE'
-        if len(params.keys()) > 0:
-            params['turkSubmitTo'] = 'https://www.mturk.com/' if production else 'https://workersandbox.mturk.com'
-            if '?' in url:
-                url = url + "&" + urlencode(params)
-            else:
-                url = url + "?" + urlencode(params)
-
-        display(IFrame(url, w, h))
-    except ImportError as e:
-        raise Exception('preview_task is not supported outside of the IPython environment')
+    if link_only:
+        display_link(url, 'Task preview')
+    else:
+        display_link(url, 'Previewing')
+        display_iframe(url=url, width=width, height=height)
 
 
 def render_jinja_template(arguments, template=None, template_uri=None):

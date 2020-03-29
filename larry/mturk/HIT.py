@@ -181,5 +181,8 @@ class HIT(collections.UserDict):
         else:
             return 0
 
+    def display_task_link(self):
+        mturk.display_task_link(self.hit_type_id, self.production)
+
     def expire(self):
         mturk.expire_hit(self.hit_id, self.__client)
