@@ -7,7 +7,7 @@ from larry import sagemaker
 from larry import lmbda
 from larry import iam
 
-__version__ = "0.1.22"
+__version__ = "0.1.23"
 
 
 def _propagate_session():
