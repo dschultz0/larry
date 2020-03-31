@@ -73,6 +73,7 @@ def __load_resource(func):
 
 
 def __decompose_location(require_bucket=True, require_key=False, key_arg='key', allow_multiple=False):
+    # TODO: consider if this (and the rest) should resolve to boto3 Objects rather than bucket/key pairs
     def decorate(func):
         spec = inspect.getfullargspec(func)
         offset = len(spec.args)
@@ -567,6 +568,23 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
                  metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, s3_resource=s3_resource, **params)
 
 
+def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
+    p = '' if prefix is None else prefix
+    s = '' if suffix is None else suffix
+    if o_type == types.TYPE_STRING:
+        return (p + value + s).encode(encoding), 'text/plain'
+    elif o_type == types.TYPE_DICT:
+        return (p + json.dumps(value, cls=utils.JSONEncoder) + s).encode(encoding), 'text/plain'
+    elif o_type == types.TYPE_PILLOW_IMAGE:
+        objct = BytesIO()
+        fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
+        value.save(objct, fmt)
+        objct.seek(0)
+        return objct.getvalue(), extension_types.get(extension, extension_types.get(fmt.lower(), 'text/plain'))
+    else:
+        raise Exception('Unhandled type')
+
+
 @__load_resource
 @__decompose_location(require_key=True)
 def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
@@ -609,6 +627,7 @@ def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=N
                         storage_class=storage_class, tags=tags, s3_resource=s3_resource)
 
     # List
+    # TODO: Handle iterables
     elif isinstance(value, list):
         if content_type is None:
             content_type = extension_types.get(extension, 'text/plain')
@@ -721,6 +740,200 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
                     content_encoding=content_encoding, content_language=content_language, content_length=content_length,
                     metadata=metadata, sse=sse, storage_class=storage_class, tags=tags,
                     s3_resource=s3_resource)
+
+
+@__load_resource
+@__decompose_location(require_key=True)
+def __append(content, *location, bucket=None, key=None, uri=None, s3_resource=None):
+    """
+    Append content to the end of an s3 object.
+
+    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
+    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
+    multi-threaded or multi-user environment.
+    :param content: Data to write
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    """
+    # load the object and build the parameters that will be used to rewrite it
+    objct = obj(bucket, key, s3_resource=s3_resource)
+    values = {
+        'content_encoding': objct.content_encoding,
+        'content_language': objct.content_language,
+        'content_type': objct.content_type,
+        'metadata': objct.metadata,
+        'sse': objct.server_side_encryption,
+        'storage_class': objct.storage_class
+    }
+    params = utils.map_parameters(values, {
+        'content_encoding': 'ContentEncoding',
+        'content_language': 'ContentLanguage',
+        'content_length': 'ContentLength',
+        'content_type': 'ContentType',
+        'metadata': 'Metadata',
+        'sse': 'ServerSideEncryption',
+        'storage_class': 'StorageClass',
+    })
+    tags = s3_resource.meta.client.get_object_tagging(Bucket=bucket, Key=key).get('TagSet',[])
+    if len(tags) > 0:
+        tags = {pair['Key']: pair['Value'] for pair in tags}
+        print(tags)
+        params['Tagging'] = parse.urlencode(tags)
+
+    # get the current ACL
+    acl = objct.Acl()
+    grants = acl.grants
+    owner = acl.owner
+
+    body = objct.get()['Body'].read() + content
+    objct.put(Body=body, **params)
+    objct.Acl().put(AccessControlPolicy={
+        'Grants': grants,
+        'Owner': owner
+    })
+
+
+@__load_resource
+@__decompose_location(require_key=True)
+def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8',
+           s3_resource=None):
+    # the append logic is designed around text based files so we'll convert int and float values to string first
+    if isinstance(value, int) or isinstance(value, float):
+        value = str(value)
+
+    # write out the new string
+    if isinstance(value, str):
+        __append(__value_bytes_as(value,
+                                  types.TYPE_STRING,
+                                  encoding=encoding,
+                                  suffix=newline if incl_newline else None)[0],
+                 bucket=bucket, key=key, s3_resource=s3_resource)
+
+    # write out the new json
+    elif isinstance(value, Mapping):
+        __append(__value_bytes_as(value,
+                                  types.TYPE_DICT,
+                                  encoding=encoding,
+                                  suffix=newline if incl_newline else None)[0],
+                 bucket=bucket, key=key, s3_resource=s3_resource)
+
+    # iterate through a list of values using the same write approach
+    elif hasattr(value, '__iter__'):
+        buff = BytesIO()
+        for v in value:
+            if isinstance(v, int) or isinstance(v, float):
+                v = str(v)
+            if isinstance(v, str):
+                buff.write(__value_bytes_as(v, types.TYPE_STRING, encoding=encoding,
+                                            suffix=newline if incl_newline else None)[0])
+            elif isinstance(v, Mapping):
+                buff.write(__value_bytes_as(v, types.TYPE_DICT, encoding=encoding,
+                                            suffix=newline if incl_newline else None)[0])
+            else:
+                buff.write(v)
+        buff.seek(0)
+        __append(buff.getvalue(), bucket=bucket, key=key, s3_resource=s3_resource)
+
+    # hope that the value is in a byte format that can be appended to the existing content
+    else:
+        __append(value, bucket=bucket, key=key, s3_resource=s3_resource)
+
+
+@__load_resource
+@__decompose_location(require_key=True)
+def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', delimiter=',',
+              columns=None, indices=None, encoding='utf-8', s3_resource=None):
+    """
+    Write an object to the bucket/key pair (or uri), converting the python
+    object to an appropriate format to write to file.
+    :param value: Object to write to S3
+    :param o_type: A value defined in larry.types to write the data using
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param incl_newline: Boolean to indicate if a newline should be added behind the content
+    :param newline: Character(s) to use as a newline for list objects
+    :param delimiter: Column delimiter to use, ',' by default
+    :param encoding: default encoding to apply to text when converting it to bytes
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: The URI of the object written to S3
+    """
+    content = None
+    extension = key.split('.')[-1]
+
+    # if we're writing as a dict or string
+    # iterate through if it's iterable, else write out the value
+    if o_type in (types.TYPE_DICT, types.TYPE_STRING):
+        if hasattr(value, '__iter__') and not isinstance(value, str) and not isinstance(value, Mapping):
+            buff = BytesIO()
+            for v in value:
+                buff.write(__value_bytes_as(v, o_type, encoding=encoding, suffix=newline if incl_newline else None)[0])
+            buff.seek(0)
+            content = buff.getvalue()
+        else:
+            content = __value_bytes_as(value, o_type, encoding=encoding, suffix=newline if incl_newline else None)[0]
+
+    # write out delimited values
+    elif o_type == types.TYPE_DELIMITED:
+        # if it's a dict or string just write them out
+        if isinstance(value, Mapping):
+            content = __value_mapping_to_delimited_bytes(value, columns=columns, newline=newline,
+                                                         delimiter=delimiter, encoding=encoding)
+        elif isinstance(value, str):
+            content = __value_bytes_as(value, types.TYPE_STRING, encoding=encoding, extension=extension)[0]
+
+        # if it's a list, handle the cases where it may be a list of rows instead of just one row
+        elif hasattr(value, '__iter__'):
+            value = list(value)
+
+            # if it contains dicts, write those out as rows
+            if isinstance(value[0], Mapping):
+                buff = BytesIO()
+                for v in value:
+                    buff.write(__value_mapping_to_delimited_bytes(v, columns=columns, newline=newline,
+                                                                  delimiter=delimiter, encoding=encoding)[0])
+                buff.seek(0)
+                content = buff.getvalue()
+
+            # if it contains strings then this is just a single row of values
+            elif isinstance(value[0], str):
+                content = __value_bytes_as(_array_to_string(value, delimiter, indices), types.TYPE_STRING,
+                                           encoding=encoding, suffix=newline)[0]
+
+            # if it contains inner lists, then it was a 2d array of values and we'll want to write those out
+            elif hasattr(value[0], '__iter__'):
+                buff = BytesIO()
+                for v in value:
+                    buff.write(__value_bytes_as(_array_to_string(v, delimiter, indices), types.TYPE_STRING,
+                                                encoding=encoding, suffix=newline)[0])
+                buff.seek(0)
+                content=buff.getvalue()
+
+            # else assume it was non-string values that can be written out
+            else:
+                content = __value_bytes_as(_array_to_string(value, delimiter, indices), types.TYPE_STRING,
+                                           encoding=encoding, suffix=newline)[0]
+
+        # else it's hopefully some type of value that can be appended to bytes (ignoring newline)
+        else:
+            content = value
+    else:
+        raise Exception('Unhandled type')
+    __append(content, bucket=bucket, key=key, s3_resource=s3_resource)
+
+
+def __value_mapping_to_delimited_bytes(value, columns=None, newline='\n', delimiter=',', encoding='utf-8'):
+    keys = columns if columns else value.keys()
+    buff = StringIO()
+    for i, k in enumerate(keys):
+        if i > 0:
+            buff.write(delimiter)
+        buff.write(str(value.get(k, '')))
+    return __value_bytes_as(buff.getvalue(), types.TYPE_STRING, encoding=encoding, suffix=newline)
 
 
 @__load_resource
