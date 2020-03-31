@@ -511,28 +511,28 @@ def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_cl
     return mturk_client.disassociate_qualification_from_worker(**params)
 
 
-def preview_url(hit_type_id, production=None):
+def preview_url(hit_type_id, prod=None):
     """
     Generates a preview URL for the hit_type_id using the current environment.
     :param hit_type_id: The HIT type
-    :param production: True if the request is for the production environment
+    :param prod: True if the request is for the production environment
     :return: The preview URL
     """
     global __production
-    prod = __production if __production is None else __production
+    prod = prod if __production is None else __production
     if prod:
         return "https://worker.mturk.com/mturk/preview?groupId={}".format(hit_type_id)
     else:
         return "https://workersandbox.mturk.com/mturk/preview?groupId={}".format(hit_type_id)
 
 
-def display_task_link(hit_type_id, production=None):
+def display_task_link(hit_type_id, prod=None):
     """
     Display a link to the task group on the appropriate worker site.
     :param hit_type_id: The HIT type
-    :param production: True if the request is for the production environment
+    :param prod: True if the request is for the production environment
     """
-    display_link(preview_url(hit_type_id, production=production), 'Click to view the task')
+    display_link(preview_url(hit_type_id, prod=prod), 'Click to view the task')
 
 
 def add_notification(hit_type_id, destination, event_types, mturk_client=None):
@@ -715,7 +715,7 @@ def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None
 
 def display_task_preview(url=None, template=None, template_uri=None, context=None, bucket=None,
                          prefix='larry_mturk_task_preview/', worker_id=None, assignment_id=None, hit_id=None,
-                         preview=None, production=True, width=None, height=600, link_only=False):
+                         preview=None, prod=True, width=None, height=600, link_only=False):
     """
     Opens the task to view within an iframe in your Jupyter environment. There are three modes to use of this
     preview: url, in-memory template, or s3 template. For the template modes, a template and context must be provided.
@@ -736,7 +736,7 @@ def display_task_preview(url=None, template=None, template_uri=None, context=Non
     :param assignment_id:  An assignmentId to populate in the URL parameters for the task
     :param hit_id:  A hitId to populate in the URL parameters for the task
     :param preview: Pass the ASSIGNMENT_ID_NOT_AVAILABLE assignmentId to simulate preview mode
-    :param production: Indicate the turkSubmitTo value to pass (sandbox or production)
+    :param prod: Indicate the turkSubmitTo value to pass (sandbox or production)
     :param width: Specifies the width of the iframe
     :param height: Specifies the height of the iframe
     :param link_only: Only display a link to the task interface (don't render an iframe with the content); ignored
@@ -768,7 +768,7 @@ def display_task_preview(url=None, template=None, template_uri=None, context=Non
     if preview:
         params['assignmentId'] = 'ASSIGNMENT_ID_NOT_AVAILABLE'
     if len(params.keys()) > 0:
-        params['turkSubmitTo'] = 'https://www.mturk.com/' if production else 'https://workersandbox.mturk.com'
+        params['turkSubmitTo'] = 'https://www.mturk.com/' if prod else 'https://workersandbox.mturk.com'
         if '?' in url:
             url = url + "&" + urlencode(params)
         else:
@@ -819,9 +819,10 @@ def render_html_question(html, frame_height=0):
     :param frame_height: Frame height to use for the Worker viewport, zero by default to use the whole window
     :return: The rendered HTMLQuestion XML string
     """
-    return '''<HTMLQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2011-11-11/HTMLQuestion.xsd">
-                <HTMLContent><![CDATA[{}]]></HTMLContent><FrameHeight>{}</FrameHeight>
-              </HTMLQuestion>'''.format(html, frame_height)
+    return '''
+    <HTMLQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2011-11-11/HTMLQuestion.xsd">
+      <HTMLContent><![CDATA[{}]]></HTMLContent><FrameHeight>{}</FrameHeight>
+    </HTMLQuestion>'''.format(html, frame_height)
 
 
 def render_external_question(url, frame_height=0):
@@ -831,9 +832,11 @@ def render_external_question(url, frame_height=0):
     :param frame_height: Frame height to use for the Worker viewport, zero by default to use the whole window
     :return: The rendered ExternalQuestion XML string
     """
-    return '''<ExternalQuestion xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2006-07-14/ExternalQuestion.xsd">
-                <ExternalURL>{}</ExternalURL><FrameHeight>{}</FrameHeight>
-              </ExternalQuestion>'''.format(url, frame_height)
+    return '''
+    <ExternalQuestion 
+            xmlns="http://mechanicalturk.amazonaws.com/AWSMechanicalTurkDataSchemas/2006-07-14/ExternalQuestion.xsd">
+        <ExternalURL>{}</ExternalURL><FrameHeight>{}</FrameHeight>
+    </ExternalQuestion>'''.format(url, frame_height)
 
 
 def list_sns_events(event, event_filter=None):
