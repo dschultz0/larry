@@ -29,5 +29,10 @@ def set_session(aws_access_key_id=None,
 
 
 def account_id(sts_client=None):
+    """
+    Returns the account id of the AWS account associated with the current session.
+    :param sts_client: Boto3 client to use if you don't wish to use the default client
+    :return: The account id
+    """
     sts_client = sts_client if sts_client else client
     return sts_client.get_caller_identity()['Account']

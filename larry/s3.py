@@ -490,7 +490,6 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
-    objct = None
     extension = key.split('.')[-1]
     if o_type == types.TYPE_STRING:
         if content_type is None:
@@ -745,19 +744,6 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
 @__load_resource
 @__decompose_location(require_key=True)
 def __append(content, *location, bucket=None, key=None, uri=None, s3_resource=None):
-    """
-    Append content to the end of an s3 object.
-
-    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
-    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
-    multi-threaded or multi-user environment.
-    :param content: Data to write
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
-    """
     # load the object and build the parameters that will be used to rewrite it
     objct = obj(bucket, key, s3_resource=s3_resource)
     values = {
@@ -800,6 +786,22 @@ def __append(content, *location, bucket=None, key=None, uri=None, s3_resource=No
 @__decompose_location(require_key=True)
 def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8',
            s3_resource=None):
+    """
+    Append content to the end of an s3 object. Assumes that the data should be treated as text in most cases.
+
+    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
+    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
+    multi-threaded or multi-user environment.
+    :param value: Data to write
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param incl_newline: Indicates if a newline character should be appended to the value
+    :param newline: Newline character to append to the value
+    :param encoding: Encoding to use when writing str to bytes
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    """
     # the append logic is designed around text based files so we'll convert int and float values to string first
     if isinstance(value, int) or isinstance(value, float):
         value = str(value)
@@ -845,19 +847,23 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
 @__load_resource
 @__decompose_location(require_key=True)
 def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', delimiter=',',
-              columns=None, indices=None, encoding='utf-8', s3_resource=None):
+              columns=None, encoding='utf-8', s3_resource=None):
     """
-    Write an object to the bucket/key pair (or uri), converting the python
-    object to an appropriate format to write to file.
+    Append content to the end of an s3 object using the specified type to convert it prior to writing.
+
+    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
+    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
+    multi-threaded or multi-user environment.
     :param value: Object to write to S3
     :param o_type: A value defined in larry.types to write the data using
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
-    :param incl_newline: Boolean to indicate if a newline should be added behind the content
+    :param incl_newline: Boolean to indicate if a newline should be added after the content
     :param newline: Character(s) to use as a newline for list objects
     :param delimiter: Column delimiter to use, ',' by default
+    :param columns: The columns to write out from the source rows, dict keys or list indexes
     :param encoding: default encoding to apply to text when converting it to bytes
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
@@ -901,21 +907,21 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
 
             # if it contains strings then this is just a single row of values
             elif isinstance(value[0], str):
-                content = __value_bytes_as(_array_to_string(value, delimiter, indices), types.TYPE_STRING,
+                content = __value_bytes_as(_array_to_string(value, delimiter, columns), types.TYPE_STRING,
                                            encoding=encoding, suffix=newline)[0]
 
             # if it contains inner lists, then it was a 2d array of values and we'll want to write those out
             elif hasattr(value[0], '__iter__'):
                 buff = BytesIO()
                 for v in value:
-                    buff.write(__value_bytes_as(_array_to_string(v, delimiter, indices), types.TYPE_STRING,
+                    buff.write(__value_bytes_as(_array_to_string(v, delimiter, columns), types.TYPE_STRING,
                                                 encoding=encoding, suffix=newline)[0])
                 buff.seek(0)
                 content=buff.getvalue()
 
             # else assume it was non-string values that can be written out
             else:
-                content = __value_bytes_as(_array_to_string(value, delimiter, indices), types.TYPE_STRING,
+                content = __value_bytes_as(_array_to_string(value, delimiter, columns), types.TYPE_STRING,
                                            encoding=encoding, suffix=newline)[0]
 
         # else it's hopefully some type of value that can be appended to bytes (ignoring newline)
@@ -1145,7 +1151,7 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
 @__decompose_location(require_key=True)
 def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl=None, **kwargs):
     """
-    Retrieves the data defined by a URL to an S3 location.
+    Retrieves the data referenced by a URL to an S3 location.
     :param url: URL to retrieve
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for the object
@@ -1165,7 +1171,7 @@ def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl
 def download(file, *location, bucket=None, key=None, uri=None, use_threads=True, s3_resource=None):
     """
     Downloads the an S3 object to a directory on the local file system.
-    :param file: The file or directory to download the object to
+    :param file: The file, file-like object, or directory to download the object to
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -1209,6 +1215,26 @@ def download_to_temp(*location, bucket=None, key=None, uri=None, s3_resource=Non
 def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
            tags=None, s3_resource=None):
+    """
+    Uploads a local file to S3
+    :param file: The file, file-like object, or directory to upload
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param acl: The canned ACL to apply to the object
+    :param content_type: Content type to apply to the file
+    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
+    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
+    :param content_language: The language the content is in.
+    :param content_length: Size of the body in bytes.
+    :param metadata: A map of metadata to store with the object in S3.
+    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
+    :param storage_class: The S3 storage class to store the object in.
+    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: The uri of the file in S3
+    """
     extra = utils.map_parameters(locals(), {
         'acl': 'ACL',
         'content_encoding': 'ContentEncoding',
@@ -1284,6 +1310,13 @@ def get_public_url(*location, bucket=None, key=None, uri=None):
 
 @__load_resource
 def create_bucket(bucket, acl='private', region=__session.region_name, s3_resource=None):
+    """
+    Create a bucket in S3 and waits until it has been created.
+    :param bucket: The name of the bucket
+    :param acl: The canned ACL to apply to the object
+    :param region: The region to location the S3 bucket, defaults to the region of the current session
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    """
     bucket_obj = s3_resource.Bucket(bucket)
     bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
     bucket_obj.wait_until_exists()
@@ -1291,6 +1324,11 @@ def create_bucket(bucket, acl='private', region=__session.region_name, s3_resour
 
 @__load_resource
 def delete_bucket(bucket, s3_resource=None):
+    """
+    Delete an S3 bucket.
+    :param bucket: The name of the bucket
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    """
     bucket_obj = s3_resource.Bucket(bucket)
     bucket_obj.delete()
 

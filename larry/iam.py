@@ -34,6 +34,11 @@ def set_session(aws_access_key_id=None,
 
 
 def __assume_role_service_policy(service):
+    """
+    Generates a policy document to use as the assume role policy for a service role.
+    :param service: The service that will be able to use the role
+    :return: A policy document
+    """
     return json.dumps({
         "Version": "2012-10-17",
         "Statement": [
@@ -48,6 +53,11 @@ def __assume_role_service_policy(service):
 
 
 def policy(name_or_arn):
+    """
+    Retrieves the policy object associated with the provided name or ARN.
+    :param name_or_arn: A name or ARN associated with the policy
+    :return: A boto3 Policy object
+    """
     if name_or_arn.startswith('arn:aws:iam'):
         return resource.Policy(name_or_arn)
     else:
@@ -55,6 +65,11 @@ def policy(name_or_arn):
 
 
 def get_policy_if_exists(name):
+    """
+    Attempts to load the requested policy and returns None if it does not exist.
+    :param name: The name or ARN associated with the policy
+    :return: A boto3 Policy object or None
+    """
     try:
         p = policy(name)
         p.load()
@@ -67,10 +82,20 @@ def get_policy_if_exists(name):
 
 
 def role(name):
+    """
+    Retrieves the role object associated with the provided name
+    :param name: A name associated with the role
+    :return: A boto3 Role object
+    """
     return resource.Role(name)
 
 
 def get_role_if_exists(name):
+    """
+    Attempts to load the requested role and returns None if it does not exist.
+    :param name: A name associated with the role
+    :return: A boto3 Role object or None
+    """
     try:
         r = role(name)
         r.load()
@@ -82,19 +107,33 @@ def get_role_if_exists(name):
             raise e
 
 
-def create_service_role(name, service, policy=None):
+def create_service_role(name, service, policies=None):
+    """
+    Creates a service role with assume-role permissions for the specified service.
+    :param name: Name of the role
+    :param service: Service to allow to use the role
+    :param policies: Policy or policies to attach to the role
+    :return: ARN for the created role
+    """
     r = resource.create_role(RoleName=name,
                              AssumeRolePolicyDocument=__assume_role_service_policy(service))
-    if policy:
-        if isinstance(policy, list):
-            for p in policy:
+    if policies:
+        if isinstance(policies, list):
+            for p in policies:
                 r.attach_policy(PolicyArn=p)
         else:
-            r.attach_policy(PolicyArn=policy)
+            r.attach_policy(PolicyArn=policies)
     return r.arn
 
 
 def create_or_update_service_role(name, service, policies=None):
+    """
+    Creates or updates a service role with assume-role permissions for the specified service.
+    :param name: Name of the role
+    :param service: Service to allow to use the role
+    :param policies: Policy or policies to attach to the role
+    :return: ARN for the role
+    """
     existing = get_role_if_exists(name)
     if existing:
         if policies is None:
@@ -113,10 +152,18 @@ def create_or_update_service_role(name, service, policies=None):
             existing.AssumeRolePolicy().update(PolicyDocument=__assume_role_service_policy(service))
         return existing.arn
     else:
-        return create_service_role(name, service, policy=policies)
+        return create_service_role(name, service, policies=policies)
 
 
 def create_policy(name, document, path=None, description=None):
+    """
+    Creates an IAM policy based on the provided document.
+    :param name: The name of the policy
+    :param document: The policy document to use (str or dict)
+    :param path: The path for the policy.
+    :param description: A friendly description of the policy.
+    :return: ARN for the policy
+    """
     params = utils.map_parameters(locals(), {
         'name': 'PolicyName',
         'document': 'PolicyDocument',
@@ -129,6 +176,16 @@ def create_policy(name, document, path=None, description=None):
 
 
 def create_or_update_policy(name, document, path=None, description=None):
+    """
+    Creates or updates an IAM policy based on the provided document. Note that when updating it will create a
+    new default version of the policy and may delete prior versions to remain with the limit of 5 active versions
+    of a policy.
+    :param name: The name of the policy
+    :param document: The policy document to use (str or dict)
+    :param path: The path for the policy, does not update.
+    :param description: A friendly description of the policy, does not update.
+    :return: ARN for the policy
+    """
     existing = get_policy_if_exists(name)
     if existing:
         # you can have a max of 5 versions, this will remove the oldest if necessary
@@ -147,20 +204,36 @@ def create_or_update_policy(name, document, path=None, description=None):
 
 
 def delete_policy(name):
+    """
+    Deletes a given policy. Note that a policy cannot be deleted if it's attached to any roles.
+    :param name: The name or ARN of the policy
+    """
     policy(name).delete()
 
 
 def delete_role(name):
+    """
+    Deletes a given role. Note that a role cannot be deleted if it's attached to any policies.
+    :param name: The name of the role
+    """
     role(name).delete()
 
 
 def detach_roles_from_policy(name):
+    """
+    Detaches all roles that have been attached to a given policy.
+    :param name: The name or ARN of the policy
+    """
     p = policy(name)
     for r in p.attached_roles.all():
         p.detach_role(RoleName=r.name)
 
 
 def detach_policies_from_role(name):
+    """
+    Detaches all policies that have been attached to a given role.
+    :param name: The name of the role
+    """
     r = role(name)
     for p in r.attached_policies.all():
         r.detach_policy(PolicyArn=p.arn)
