@@ -42,7 +42,7 @@ def set_session(aws_access_key_id=None,
 
 
 def get(name):
-    return client.get_function(FunctionName=name)
+    return client.get_function(FunctionName=name)['Configuration']
 
 
 def get_if_exists(name):
