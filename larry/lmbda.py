@@ -56,15 +56,15 @@ def get_if_exists(name):
 
 
 def create_from_function(name, function, role, runtime='python3.8', timeout=None, memory_size=None, publish=True,
-                         description=None):
-    package, handler = package_function(function)
+                         description=None, imports=None):
+    package, handler = package_function(function, imports=imports)
     return create(name, package, handler, role, runtime, timeout, memory_size, publish, description)
 
 
-def package_function(function):
+def package_function(function, imports=None):
     obj = BytesIO()
     zf = zipfile.ZipFile(obj, "a")
-    zf.writestr('handler.py', generate_code_from_function(function), zipfile.ZIP_DEFLATED)
+    zf.writestr('handler.py', generate_code_from_function(function, imports=imports), zipfile.ZIP_DEFLATED)
     for zfile in zf.filelist:
         zfile.create_system = 0
         zfile.external_attr = 0
@@ -73,17 +73,20 @@ def package_function(function):
     return obj.read(), 'handler.' + function.__name__
 
 
-def create_or_update(name, package=None, handler=None, role=None, runtime='python3.8', timeout=None, memory_size=None,
+def create_or_update(name, package=None, handler=None, role=None, runtime=None, timeout=None, memory_size=None,
                      publish=True, description=None):
     # TODO: Add create_role=True parameter that will generate a service role with the same name
     # TODO: Ideally also inspect the code to see what boto clients it creates. In the generate step with imports?
     existing = get_if_exists(name)
     if existing:
         if package is not None:
-            update(name, package, publish=publish)
-        # TODO: Update the other config values if they've changed
+            update_code(name, package, publish=publish)
+        if not (handler is None and role is None and runtime is None and timeout is None and memory_size is None):
+            update_config(name, handler=handler, role=role, runtime=runtime, timeout=timeout, memory_size=memory_size)
         return existing['Configuration']['FunctionArn']
     else:
+        if runtime is None:
+            runtime = 'python3.8'
         return create(name, package, handler, role, runtime=runtime, timeout=timeout, memory_size=memory_size,
                       publish=publish, description=description)
 
@@ -108,15 +111,27 @@ def create(name, package, handler, role, runtime='python3.8', timeout=None, memo
     return resp['FunctionArn']
 
 
-def update(name, package, publish=True, dry_run=False):
-    params = utils.map_parameters(locals(), {
+def update_code(name, package, publish=True, dry_run=False):
+    code_params = utils.map_parameters(locals(), {
         'publish': 'Publish',
         'dry_run': 'DryRun',
         'name': 'FunctionName'
     })
-    params['ZipFile'] = package
-    resp = client.update_function_code(**params)
+    code_params['ZipFile'] = package
+    resp = client.update_function_code(**code_params)
     return resp['FunctionArn']
+
+
+def update_config(name, handler=None, role=None, runtime='python3.8', timeout=None, memory_size=None):
+    config_params = utils.map_parameters(locals(), {
+        'name': 'FunctionName',
+        'handler': 'Handler',
+        'role': 'Role',
+        'runtime': 'Runtime',
+        'timeout': 'Timeout',
+        'memory_size': 'MemorySize'
+    })
+    client.update_function_configuration(**config_params)
 
 
 def delete(name):
@@ -213,13 +228,20 @@ def _get_function_calls(func, built_ins=False):
     return sorted(list(names.keys()))
 
 
-def generate_code_from_function(handler, imports=('json', 'boto3')):
+def generate_code_from_function(handler, imports=None):
     code = ''
+
+    if imports is None:
+        imports = ['json', 'boto3']
 
     # build the list of imports
     for val in imports:
         if val.startswith('import') or val.startswith('from'):
             code += val + '\n'
+        elif val.count(':') == 1:
+            code += 'import {} as {}\n'.format(*val.split(':'))
+        elif val.count('>') == 1:
+            code += 'from {} import {}\n'.format(*val.split('>'))
         else:
             code += 'import ' + val + '\n'
 
