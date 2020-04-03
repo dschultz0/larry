@@ -1289,7 +1289,6 @@ def create_bucket(bucket, acl='private', region=__session.region_name, s3_resour
     if bucket_obj.creation_date is None:
         bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
         bucket_obj.wait_until_exists()
-    return bucket_obj
 
 
 @__load_resource
