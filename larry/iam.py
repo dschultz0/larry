@@ -1,25 +1,15 @@
 from larry import utils
 import boto3
 import json
+from collections import Mapping
+from botocore.exceptions import ClientError
+from larry import sts
+
 
 # Local IAM resource object
 resource = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
-
-
-def __assume_role_service_policy(service):
-    return json.dumps({
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Principal": {
-                    "Service": "{}.amazonaws.com".format(service)
-                },
-                "Action": "sts:AssumeRole"}
-        ]
-    })
 
 
 def set_session(aws_access_key_id=None,
@@ -43,19 +33,140 @@ def set_session(aws_access_key_id=None,
     resource = __session.resource('iam')
 
 
+def __assume_role_service_policy(service):
+    return json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {
+                    "Service": "{}.amazonaws.com".format(service)
+                },
+                "Action": "sts:AssumeRole"}
+        ]
+    })
+
+
+def policy(name_or_arn):
+    if name_or_arn.startswith('arn:aws:iam'):
+        return resource.Policy(name_or_arn)
+    else:
+        return resource.Policy('arn:aws:iam::{}:policy/{}'.format(sts.account_id(), name_or_arn))
+
+
+def get_policy_if_exists(name):
+    try:
+        p = policy(name)
+        p.load()
+        return p
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchEntity':
+            return None
+        else:
+            raise e
+
+
+def role(name):
+    return resource.Role(name)
+
+
+def get_role_if_exists(name):
+    try:
+        r = role(name)
+        r.load()
+        return r
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchEntity':
+            return None
+        else:
+            raise e
+
+
 def create_service_role(name, service, policy=None):
-    role = resource.create_role(RoleName=name,
-                                AssumeRolePolicyDocument=__assume_role_service_policy(service))
+    r = resource.create_role(RoleName=name,
+                             AssumeRolePolicyDocument=__assume_role_service_policy(service))
     if policy:
         if isinstance(policy, list):
             for p in policy:
-                role.attach_policy(PolicyArn=p)
+                r.attach_policy(PolicyArn=p)
         else:
-            role.attach_policy(PolicyArn=policy)
-    return role.arn
+            r.attach_policy(PolicyArn=policy)
+    return r.arn
 
 
-class policies():
+def create_or_update_service_role(name, service, policies=None):
+    existing = get_role_if_exists(name)
+    if existing:
+        if policies is None:
+            policies = []
+        if not isinstance(policies, list):
+            policies = [policies]
+        existing_policies = [p.arn for p in list(existing.attached_policies.all())]
+        for p in existing_policies:
+            if p not in policies:
+                existing.detach_policy(PolicyArn=p)
+        for p in policies:
+            if p not in existing_policies:
+                existing.attach_policy(PolicyArn=p)
+        existing_service = existing.assume_role_policy_document['Statement'][0]['Principal']['Service'].split('.')[0]
+        if existing_service != service:
+            existing.AssumeRolePolicy().update(PolicyDocument=__assume_role_service_policy(service))
+        return existing.arn
+    else:
+        return create_service_role(name, service, policy=policies)
+
+
+def create_policy(name, document, path=None, description=None):
+    params = utils.map_parameters(locals(), {
+        'name': 'PolicyName',
+        'document': 'PolicyDocument',
+        'path': 'Path',
+        'description': 'Description'
+    })
+    if isinstance(document, Mapping):
+        params['PolicyDocument'] = json.dumps(document)
+    return resource.create_policy(**params).arn
+
+
+def create_or_update_policy(name, document, path=None, description=None):
+    existing = get_policy_if_exists(name)
+    if existing:
+        # you can have a max of 5 versions, this will remove the oldest if necessary
+        versions = list(existing.versions.all())
+        if len(versions) >= 5:
+            for version in sorted(versions, key=lambda v: int(v.version_id[1:])):
+                if not version.is_default_version:
+                    version.delete()
+                    break
+
+        doc = json.dumps(document) if isinstance(document, Mapping) else document
+        existing.create_version(PolicyDocument=doc, SetAsDefault=True)
+        return existing.arn
+    else:
+        return create_policy(name, document, path=path, description=description)
+
+
+def delete_policy(name):
+    policy(name).delete()
+
+
+def delete_role(name):
+    role(name).delete()
+
+
+def detach_roles_from_policy(name):
+    p = policy(name)
+    for r in p.attached_roles.all():
+        p.detach_role(RoleName=r.name)
+
+
+def detach_policies_from_role(name):
+    r = role(name)
+    for p in r.attached_policies.all():
+        r.detach_policy(PolicyArn=p.arn)
+
+
+class aws_policies():
     AWSDirectConnectReadOnlyAccess = 'arn:aws:iam::aws:policy/AWSDirectConnectReadOnlyAccess'
     AmazonGlacierReadOnlyAccess = 'arn:aws:iam::aws:policy/AmazonGlacierReadOnlyAccess'
     AWSMarketplaceFullAccess = 'arn:aws:iam::aws:policy/AWSMarketplaceFullAccess'
