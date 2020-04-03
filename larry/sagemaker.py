@@ -5,6 +5,7 @@ from larry import utils
 from larry import s3
 from larry import lmbda
 from larry.core.ipython import display_iframe
+from larry.core import is_arn
 from botocore.exceptions import ClientError
 from larry.utils.image import scale_image_to_size
 
@@ -43,6 +44,23 @@ class labeling():
 
     @staticmethod
     def display_task_preview(template, pre_lambda, input_data, role, width=None, height=600):
+
+        # if this isn't template html attempt to treat it as a file (s3 or local)
+        if '<' not in template or '>' not in template:
+
+            # If the template is a uri use that
+            parts = s3.decompose_uri(template)
+            if parts[0] is not None and parts[1] is not None:
+                template = s3.read_str(template)
+
+            # else try to open it like a file
+            else:
+                try:
+                    with open(template, 'r') as fp:
+                        template = fp.read()
+                except IOError:
+                    pass
+
         processed_data = lmbda.invoke_as_json(pre_lambda, {'dataObject': input_data})
         response = client.render_ui_template(
             UiTemplate={'Content': template},
@@ -168,23 +186,27 @@ class labeling():
         return config
 
     @staticmethod
-    def build_human_task_config(template_uri, pre_lambda_arn, consolidation_lambda_arn, title, description, workers=1,
+    def build_human_task_config(template_uri, pre_lambda, consolidation_lambda, title, description, workers=1,
                                 public=False, reward_in_cents=None, workteam_arn=None, time_limit=300, lifetime=345600,
                                 max_concurrent_tasks=None, keywords=None, region=None):
 
         region = _resolve_region(region)
+        if not is_arn(pre_lambda):
+            pre_lambda = lmbda.get(pre_lambda)['FunctionArn']
+        if not is_arn(consolidation_lambda):
+            consolidation_lambda = lmbda.get(consolidation_lambda)['FunctionArn']
         config = {
             'UiConfig': {
                 'UiTemplateS3Uri': template_uri
             },
-            'PreHumanTaskLambdaArn': pre_lambda_arn,
+            'PreHumanTaskLambdaArn': pre_lambda,
             'TaskTitle': title,
             'TaskDescription': description,
             'NumberOfHumanWorkersPerDataObject': workers,
             'TaskTimeLimitInSeconds': time_limit,
             'TaskAvailabilityLifetimeInSeconds': lifetime,
             'AnnotationConsolidationConfig': {
-                'AnnotationConsolidationLambdaArn': consolidation_lambda_arn
+                'AnnotationConsolidationLambdaArn': consolidation_lambda
             }
         }
         if public:
