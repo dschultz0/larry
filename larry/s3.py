@@ -1285,10 +1285,8 @@ def get_public_url(*location, bucket=None, key=None, uri=None):
 @__load_resource
 def create_bucket(bucket, acl='private', region=__session.region_name, s3_resource=None):
     bucket_obj = s3_resource.Bucket(bucket)
-    bucket_obj.load()
-    if bucket_obj.creation_date is None:
-        bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
-        bucket_obj.wait_until_exists()
+    bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
+    bucket_obj.wait_until_exists()
 
 
 @__load_resource
