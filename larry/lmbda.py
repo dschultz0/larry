@@ -363,7 +363,7 @@ def invoke_as(name, o_type, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPON
         return result
 
 
-def invoke_as_string(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
+def invoke_as_str(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
     """
     Invokes a Lambda function and formats the response as a string
     :param name: The name or ARN of the function

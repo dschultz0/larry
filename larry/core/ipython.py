@@ -1,5 +1,6 @@
 import uuid
 import warnings
+from html import escape
 
 
 def display_iframe(url=None, html=None, width=None, height=600, frame_border=5):
@@ -9,7 +10,7 @@ def display_iframe(url=None, html=None, width=None, height=600, frame_border=5):
         from IPython.display import display, HTML
         if html:
             _html = '<iframe id="{}" width="{}" height="{}" srcdoc="{}" frameborder="{}" allowfullscreen></iframe>'\
-                    .format(frame_id, w, height, html.replace('"', '&quot;'), frame_border)
+                    .format(frame_id, w, height, escape(html), frame_border)
         else:
             _html = '<iframe id="{}" width="{}" height="{}" src="{}" frameborder="{}" allowfullscreen></iframe>'\
                     .format(frame_id, w, height, url, frame_border)
