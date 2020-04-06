@@ -1024,11 +1024,11 @@ def decompose_uri(uri):
     :param uri: S3 URI
     :return: Tuple containing a bucket and key
     """
-    m = uri_regex.match(uri)
-    if m:
-        return m.groups()
-    else:
-        return None, None
+    if isinstance(uri, str):
+        m = uri_regex.match(uri)
+        if m:
+            return m.groups()
+    return None, None
 
 
 def get_bucket_name(uri):

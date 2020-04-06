@@ -8,6 +8,8 @@ from larry.core.ipython import display_iframe
 from larry.core import is_arn
 from botocore.exceptions import ClientError
 from larry.utils.image import scale_image_to_size
+from collections import Mapping
+import warnings
 
 client = None
 # A local instance of the boto3 session to use
@@ -43,7 +45,46 @@ class labeling():
     global __session
 
     @staticmethod
-    def display_task_preview(template, pre_lambda, input_data, role, width=None, height=600):
+    def display_task_preview(template, role, template_input=None, pre_lambda=None, lambda_input=None,
+                             width=None, height=600):
+        """
+        Renders the UI template in an iframe within Jupyter or JupyterLab so that you can preview the worker's
+        experience. Either a template_input or the pre_lambda and lambda_input can be provided to pass to the template.
+        :param template: Template HTML, S3 URI, or file path to use as the template
+        :param role: ARN for the IAM role that has access to the necessary resources (typically your SageMaker
+        Execution role)
+        :param template_input: Data to pass to the template (contents of the taskInput value returned from the pre
+        lambda)
+        :param pre_lambda: The ARN of a Lambda function that is run before a data object is sent to a human worker.
+        :param lambda_input: A data record that you plan to submit to Ground Truth
+        :param width: The width in pixels of the iframe, defaults to the maximum width possible within the Jupyter cell
+        :param height: The height in pixels of the iframe
+        :return: A tuple containing the rendered HTML and any errors.
+        """
+        html, errors = labeling.render_ui_template(template, role=role, template_input=template_input,
+                                                   pre_lambda=pre_lambda, lambda_input=lambda_input)
+        if errors and len(errors) > 0:
+            if len(errors) == 1:
+                raise Exception('An error occurred in rendering: {}'.format(errors[0]))
+            else:
+                raise Exception('{} errors occurred in rendering: {}'.format(len(errors), json.dumps(errors)))
+        else:
+            display_iframe(html=html, width=width, height=height)
+
+    @staticmethod
+    def render_ui_template(template, role, template_input=None, pre_lambda=None, lambda_input=None):
+        """
+        Renders the UI template to HTML so that you can preview the worker's experience. Either a template_input or
+        the pre_lambda and lambda_input can be provided to pass to the template.
+        :param template: Template HTML, S3 URI, or file path to use as the template
+        :param role: ARN for the IAM role that has access to the necessary resources (typically your SageMaker
+        Execution role)
+        :param template_input: Data to pass to the template (contents of the taskInput value returned from the pre
+        lambda)
+        :param pre_lambda: The ARN of a Lambda function that is run before a data object is sent to a human worker.
+        :param lambda_input: A data record that you plan to submit to Ground Truth
+        :return: A tuple containing the rendered HTML and any errors.
+        """
 
         # if this isn't template html attempt to treat it as a file (s3 or local)
         if '<' not in template or '>' not in template:
@@ -61,102 +102,16 @@ class labeling():
                 except IOError:
                     pass
 
-        processed_data = lmbda.invoke_as_json(pre_lambda, {'dataObject': input_data})
-        response = client.render_ui_template(
-            UiTemplate={'Content': template},
-            Task={'Input': json.dumps(processed_data['taskInput'])},
-            RoleArn=role)
-        display_iframe(html=response['RenderedContent'], width=width, height=height)
+        if pre_lambda:
+            template_input = lmbda.invoke_as_dict(pre_lambda, {'dataObject': lambda_input}).get('taskInput')
 
-    @staticmethod
-    def build_pre_response(event, log_details=True, input_attribute='taskObject'):
-        if log_details:
-            print(event)
-        source = event['dataObject'].get('source', event['dataObject'].get('source-ref'))
-        if source is None:
-            print('No source or source-ref value found')
-            return {}
-        if log_details:
-            print('Task object is: {}'.format(source))
-        response = {'taskInput': {}}
-        response['taskInput'][input_attribute] = source
-        if log_details:
-            print('Response is {}'.format(json.dumps(response)))
-        return response
+        if isinstance(template_input, Mapping):
+            template_input = json.dumps(template_input)
 
-    @staticmethod
-    def build_pre_response_from_object(event, log_details=True, input_attribute='taskObject', s3_resource=None):
-        if log_details:
-            print(event)
-        source_ref = event['dataObject'].get('source-ref')
-        if source_ref:
-            if s3_resource:
-                value = s3.read_dict(uri=source_ref, s3_resource=s3_resource)
-            else:
-                value = s3.read_dict(uri=source_ref)
-        else:
-            source = event['dataObject'].get('source')
-            if source is None:
-                print('No source or source-ref value found')
-                return {}
-            else:
-                if type(source) is str:
-                    value = json.loads(source)
-                else:
-                    value = source
-        if log_details:
-            print('Task object is: {}'.format(json.dumps(value)))
-        response = {'taskInput': {}}
-        response['taskInput'][input_attribute] = value
-        if log_details:
-            print('Response is {}'.format(json.dumps(response)))
-        return response
-
-    @staticmethod
-    def build_consolidation_response(event, log_details=True):
-        if log_details:
-            print(json.dumps(event))
-        payload = labeling.get_payload(event)
-        if log_details:
-            print('Payload: {}'.format(json.dumps(payload)))
-
-        consolidated_response = []
-        for dataset in payload:
-            responses = labeling.extract_worker_responses(dataset['annotations'])
-            consolidated_response.append({
-                'datasetObjectId': dataset['datasetObjectId'],
-                'consolidatedAnnotation': {
-                    'content': {
-                        event['labelAttributeName']: {
-                            'responses': responses
-                        }
-                    }
-                }
-            })
-        if log_details:
-            print('Consolidated response: {}'.format(json.dumps(consolidated_response)))
-        return consolidated_response
-
-    @staticmethod
-    def extract_worker_responses(annotations):
-        responses = []
-        for annotation in annotations:
-            response = json.loads(annotation['annotationData']['content'])
-            if 'annotatedResult' in response:
-                response = response['annotatedResult']
-
-            responses.append({
-                'workerId': annotation['workerId'],
-                'annotation': response
-            })
-        return responses
-
-    @staticmethod
-    def get_payload(event):
-        if 'payload' in event:
-            return s3.read_dict(uri=event['payload']['s3Uri'])
-        else:
-            return event.get('test_payload', [])
+        result = client.render_ui_template(UiTemplate={'Content': template},
+                                           Task={'Input': template_input},
+                                           RoleArn=role)
+        return result['RenderedContent'], result.get('Errors')
 
     @staticmethod
     def _input_config(manifest_uri, free_of_pii=False, free_of_adult_content=True):
@@ -320,6 +275,11 @@ class labeling():
                 responses.append(response)
                 by_worker[worker_id] = responses
         return by_item, by_worker
+
+    @staticmethod
+    def stop_job(name, sagemaker_client=None):
+        sagemaker_client = sagemaker_client if sagemaker_client else client
+        sagemaker_client.stop_labeling_job(LabelingJobName=name)
 
     @staticmethod
     def get_results(output_uri, job_name):
