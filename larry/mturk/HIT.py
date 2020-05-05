@@ -56,6 +56,10 @@ class HIT(collections.UserDict):
         self['Annotation'] = mturk.parse_requester_annotation(self.get('RequesterAnnotation'),
                                                               s3_resource=s3_resource)
 
+    def add_assignments(self, additional_assignments):
+        mturk.add_assignments(self.hit_id, additional_assignments)
+        self['MaxAssignments'] += additional_assignments
+
     def __missing__(self, key):
         # TODO: Add support for accessing the properties as keys? hit['hit_id'] mapped to hit['HITId']
         if key == 'Assignments':

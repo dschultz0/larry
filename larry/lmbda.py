@@ -1,3 +1,4 @@
+import larry.core
 from larry import utils
 from larry import types
 from larry.s3 import decompose_uri
@@ -43,6 +44,17 @@ RUNTIME_RUBY_2_7 = 'ruby2.7'
 RUNTIME_PROVIDED = 'provided'
 
 
+def __getattr__(name):
+    if name == 'session':
+        return __session
+    elif name == 'client':
+        return client
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def __get_client(): return client
+
+
 def set_session(aws_access_key_id=None,
                 aws_secret_access_key=None,
                 aws__session_token=None,
@@ -60,7 +72,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session is not None else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
     client = __session.client('lambda')
 
 
@@ -242,7 +254,7 @@ def update_code(name, package, publish=True, dry_run=False):
     function code.
     :return: An object representing the configuration of the Lambda
     """
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'publish': 'Publish',
         'dry_run': 'DryRun',
         'name': 'FunctionName'
@@ -272,7 +284,7 @@ def update_config(name, handler=None, role=None, runtime='python3.8', timeout=No
     increases its CPU allocation. The default value is 128 MB. The value must be a multiple of 64 MB.
     :return: An object representing the configuration of the Lambda
     """
-    config_params = utils.map_parameters(locals(), {
+    config_params = larry.core.map_parameters(locals(), {
         'name': 'FunctionName',
         'handler': 'Handler',
         'role': 'Role',
@@ -314,7 +326,7 @@ def invoke(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=Fa
     function in the context object.
     :return: The response payload, also the logs if requested
     """
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'context': 'ClientContext ',
         'invoke_type': 'InvocationType',
         'name': 'FunctionName'
@@ -482,7 +494,7 @@ class Lambda(UserDict):
         """
         return invoke_as(self.arn, o_type, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
 
-    def invoke_as_string(self, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
+    def invoke_as_str(self, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
         """
         Invokes the function and formats the response as a string
         :param payload: A dict or JSON string that you want to provide to the Lambda function
@@ -492,7 +504,7 @@ class Lambda(UserDict):
         function in the context object.
         :return: The response as a string, also the logs if requested
         """
-        return invoke_as_string(self.arn, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
+        return invoke_as_str(self.arn, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
 
     def invoke_as_dict(self, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
         """

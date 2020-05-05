@@ -1,3 +1,4 @@
+import larry.core
 from larry import utils
 import boto3
 
@@ -24,7 +25,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session is not None else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
     client = __session.client('sts')
 
 

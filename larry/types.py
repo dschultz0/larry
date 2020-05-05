@@ -1,5 +1,40 @@
 from collections import UserDict, Mapping
-from larry.utils import image
+
+TYPE_DICT = 1
+TYPE_STRING = 2
+TYPE_PILLOW_IMAGE = 3
+TYPE_DELIMITED = 4
+TYPE_JSON_LINES = 5
+TYPE_NP_ARRAY = 6
+
+
+class ClientError(Exception):
+
+    def __init__(self, error):
+        self.__error = error
+
+    @classmethod
+    def from_boto(cls, error):
+        tb = error.__traceback__
+        larry_found = 'larry' in tb.tb_frame.f_code.co_filename
+        while tb.tb_next:
+            if 'larry' in tb.tb_next.tb_frame.f_code.co_filename:
+                larry_found = True
+            elif larry_found:
+                tb.tb_next = None
+                break
+            tb = tb.tb_next
+        return cls(error).with_traceback(tb)
+
+    def __getattr__(self, name):
+        if hasattr(self.__error, name):
+            return getattr(self.__error, name)
+        elif name == 'code':
+            return self.__error.response['Error']['Code']
+        elif name == 'message':
+            return self.__error.response['Error']['Message']
+        else:
+            super().__getattribute__(self, name)
 
 
 class Box(UserDict):
@@ -76,6 +111,8 @@ class Box(UserDict):
         return box
 
     def intersecting_boxes(self, boxes, min_overlap=0):
+        from larry.utils import image
+
         intersecting = []
         for box in boxes:
             if image.box_area(image.box_intersection(self, box)) > image.box_area(box)*min_overlap:

@@ -73,22 +73,6 @@ def parse_date(obj):
     return datetime.strptime(obj, DATE_FORMAT)
 
 
-def copy_non_null_keys(param_list):
-    result = {}
-    for key, val in param_list.items():
-        if val is not None:
-            result[key] = val
-    return result
-
-
-def map_parameters(parameters, key_map):
-    result = {}
-    for k, i in key_map.items():
-        if parameters.get(k) is not None:
-            result[i] = parameters[k]
-    return result
-
-
 def create_s3_key(path, extension):
     """Given a path and a file type, strips out all non A-Z0-9 characters and
     appends the file type to the end: making paths and urls s3 friendly"""

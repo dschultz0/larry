@@ -1,3 +1,4 @@
+import larry.core
 from larry import utils
 import boto3
 import json
@@ -7,7 +8,7 @@ from larry import sts
 
 
 # Local IAM resource object
-resource = None
+__resource = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
 
@@ -28,8 +29,8 @@ def set_session(aws_access_key_id=None,
     :param boto_session: An existing session to use
     :return: None
     """
-    global __session, resource
-    __session = boto_session if boto_session is not None else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    global __session, __resource
+    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
     resource = __session.resource('iam')
 
 
@@ -59,9 +60,9 @@ def policy(name_or_arn):
     :return: A boto3 Policy object
     """
     if name_or_arn.startswith('arn:aws:iam'):
-        return resource.Policy(name_or_arn)
+        return __resource.Policy(name_or_arn)
     else:
-        return resource.Policy('arn:aws:iam::{}:policy/{}'.format(sts.account_id(), name_or_arn))
+        return __resource.Policy('arn:aws:iam::{}:policy/{}'.format(sts.account_id(), name_or_arn))
 
 
 def get_policy_if_exists(name):
@@ -87,7 +88,7 @@ def role(name):
     :param name: A name associated with the role
     :return: A boto3 Role object
     """
-    return resource.Role(name)
+    return __resource.Role(name)
 
 
 def get_role_if_exists(name):
@@ -115,8 +116,8 @@ def create_service_role(name, service, policies=None):
     :param policies: Policy or policies to attach to the role
     :return: ARN for the created role
     """
-    r = resource.create_role(RoleName=name,
-                             AssumeRolePolicyDocument=__assume_role_service_policy(service))
+    r = __resource.create_role(RoleName=name,
+                               AssumeRolePolicyDocument=__assume_role_service_policy(service))
     if policies:
         if isinstance(policies, list):
             for p in policies:
@@ -164,7 +165,7 @@ def create_policy(name, document, path=None, description=None):
     :param description: A friendly description of the policy.
     :return: ARN for the policy
     """
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'name': 'PolicyName',
         'document': 'PolicyDocument',
         'path': 'Path',
@@ -172,7 +173,7 @@ def create_policy(name, document, path=None, description=None):
     })
     if isinstance(document, Mapping):
         params['PolicyDocument'] = json.dumps(document)
-    return resource.create_policy(**params).arn
+    return __resource.create_policy(**params).arn
 
 
 def create_or_update_policy(name, document, path=None, description=None):
@@ -239,7 +240,7 @@ def detach_policies_from_role(name):
         r.detach_policy(PolicyArn=p.arn)
 
 
-class aws_policies():
+class aws_policies:
     AWSDirectConnectReadOnlyAccess = 'arn:aws:iam::aws:policy/AWSDirectConnectReadOnlyAccess'
     AmazonGlacierReadOnlyAccess = 'arn:aws:iam::aws:policy/AmazonGlacierReadOnlyAccess'
     AWSMarketplaceFullAccess = 'arn:aws:iam::aws:policy/AWSMarketplaceFullAccess'

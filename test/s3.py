@@ -3,7 +3,6 @@ import larry as lry
 from larry.types import Box
 from larry.utils import json_dumps
 import datetime
-from botocore.exceptions import ClientError
 import numpy as np
 
 # S3 testing objects
@@ -43,7 +42,7 @@ class S3Tests(unittest.TestCase):
         o = lry.s3.obj(uri=URI)
         o.load()
         o = lry.s3.obj(BUCKET, KEY[:-1])
-        with self.assertRaises(ClientError) as context:
+        with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
@@ -52,7 +51,7 @@ class S3Tests(unittest.TestCase):
         o = lry.s3.obj(uri)
         o.load()
         lry.s3.delete(uri)
-        with self.assertRaises(ClientError) as context:
+        with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
         lry.s3.fetch(IMAGE_URL, BUCKET, PATH_PREFIX + 'delete_test.jpg')
@@ -61,7 +60,7 @@ class S3Tests(unittest.TestCase):
         lry.s3.delete(o.bucket_name, o.key)
         lry.s3.fetch(IMAGE_URL, BUCKET, PATH_PREFIX + 'delete_test.jpg')
         lry.s3.delete(bucket=o.bucket_name, key=o.key)
-        with self.assertRaises(ClientError) as context:
+        with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
@@ -73,7 +72,7 @@ class S3Tests(unittest.TestCase):
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
         lry.s3.delete(uris)
         o = lry.s3.obj(uris[3])
-        with self.assertRaises(ClientError) as context:
+        with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
         uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
@@ -97,7 +96,7 @@ class S3Tests(unittest.TestCase):
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
         lry.s3.delete(bucket=bucket, key=keys)
         o = lry.s3.obj(uris[4])
-        with self.assertRaises(ClientError) as context:
+        with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
@@ -247,6 +246,26 @@ class S3Tests(unittest.TestCase):
         np.testing.assert_array_equal(NUMPY_ARRAY,
                                       lry.s3.read_as(lry.types.TYPE_NP_ARRAY, uri=uri).reshape(NUMPY_SHAPE))
         lry.s3.delete(numpy_uri)
+
+    def test_readwrite_pillow(self):
+        key = PATH_PREFIX + 'pillow.jpg'
+        uri = lry.s3.compose_uri(BUCKET, key)
+        img = lry.s3.read_as(lry.types.TYPE_PILLOW_IMAGE, BUCKET, KEY)
+        w_uri = lry.s3.write(img, BUCKET, key)
+        self.assertTrue(lry.s3.exists(BUCKET, key))
+
+    def test_createdelete_bucket(self):
+        bucket1 = 'larry-testing-create1'
+        bucket2 = 'larry-testing-create2'
+        if not lry.s3.bukt(bucket1).exists:
+            lry.s3.create_bucket(bucket1)
+        print(lry.s3.resource.meta.client.get_bucket_location(Bucket=bucket1)['LocationConstraint'])
+        lry.s3.delete_bucket(bucket1)
+        lry.set_session(region_name='us-west-1')
+        if not lry.s3.bukt(bucket2).exists:
+            lry.s3.create_bucket(bucket2, region='us-west-1')
+        print(lry.s3.resource.meta.client.get_bucket_location(Bucket=bucket2)['LocationConstraint'])
+        lry.s3.delete_bucket(bucket2)
 
 
 if __name__ == '__main__':

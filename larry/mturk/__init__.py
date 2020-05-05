@@ -6,6 +6,8 @@ import zlib
 import base64
 from enum import Enum
 from collections.abc import Iterable
+
+import larry.core
 from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
 from larry import utils
@@ -54,7 +56,7 @@ def set_session(aws_access_key_id=None, aws_secret_access_key=None, aws__session
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
     s3.set_session(boto_session=__session)
     __create_client()
 
@@ -189,13 +191,13 @@ def environment():
 # TODO Review how someone would use this to see if supporting iterables or other object types makes sense
 def accept_qualification_request(request_id, value=None, mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = utils.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
+    params = larry.core.map_parameters(locals(), {'request_id': 'QualificationRequestId', 'value': 'IntegerValue'})
     mturk_client.accept_qualification_request(**params)
 
 
 def approve(assignment, feedback=None, override_rejection=None, mturk_client=None):
     def _approve_assignment(_assignment_id, _feedback, _override_rejection):
-        params = utils.map_parameters(locals(), {
+        params = larry.core.map_parameters(locals(), {
             '_assignment_id': 'AssignmentId',
             '_feedback': 'RequesterFeedback',
             '_override_rejection': 'OverrideRejection'
@@ -232,7 +234,7 @@ def assign_qualification(qualification, worker_id, value=None, send_notification
             for worker in worker_id:
                 assign_qualification(qualification_type_id, worker, value, send_notification, mturk_client)
     else:
-        params = utils.map_parameters(locals(), {
+        params = larry.core.map_parameters(locals(), {
             'worker_id': 'WorkerId',
             'value': 'IntegerValue',
             'send_notification': 'SendNotification'
@@ -245,7 +247,7 @@ associate_qualification_with_worker = assign_qualification
 
 def add_assignments(hit_id, additional_assignments, request_token=None, mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'hit_id': 'HITId',
         'additional_assignments': 'NumberOfAdditionalAssignments',
         'request_token': 'UniqueRequestToken'
@@ -282,7 +284,7 @@ def create_hit(title=None,
                mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
     if hit_type_id:
-        params = utils.map_parameters(locals(), {
+        params = larry.core.map_parameters(locals(), {
             'hit_type_id': 'HITTypeId',
             'lifetime': 'LifetimeInSeconds',
             'max_assignments': 'MaxAssignments',
@@ -294,7 +296,7 @@ def create_hit(title=None,
             'hit_layout_parameters': 'HITLayoutParameters'
         })
     else:
-        params = utils.map_parameters(locals(), {
+        params = larry.core.map_parameters(locals(), {
             'title': 'Title',
             'description': 'Description',
             'reward': 'Reward',
@@ -345,7 +347,7 @@ def create_hit_type(title,
                     qualification_requirements=None,
                     mturk_client=None):
     mturk_client = mturk_client if mturk_client else client
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'title': 'Title',
         'description': 'Description',
         'reward': 'Reward',
@@ -363,6 +365,7 @@ def _get_assignment(assignment_id, mturk_client=None):
     """
     Retrieves the Assignment and HIT data for a given AssignmentID. The Assignment data is updated to replace the
     Answer XML with a dict object.
+
     :param assignment_id: The assignment to retrieve
     :param mturk_client: The MTurk client to use for this request instead of the default client
     :return: A tuple of assignment and hit dicts
@@ -376,6 +379,7 @@ def get_assignment(assignment_id, mturk_client=None):
     """
     Retrieves the Assignment and HIT data for a given AssignmentID. The Assignment data is updated to replace the
     Answer XML with a dict object.
+
     :param assignment_id: The assignment to retrieve
     :param mturk_client: The MTurk client to use for this request instead of the default client
     :return: A tuple of assignment and hit dicts
@@ -397,6 +401,7 @@ def _get_hit(hit_id, mturk_client=None):
 def get_hit(hit_id, mturk_client=None):
     """
     Retrieve HIT data for the id
+
     :param hit_id: ID to retrieve
     :param mturk_client: The MTurk client to use for this request instead of the default client
     :return: A dict containing HIT attributes
@@ -408,6 +413,7 @@ def get_hit(hit_id, mturk_client=None):
 def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=True, mturk_client=None):
     """
     Retrieves all of the assignments for a HIT with the Answer XML processed into a dict.
+
     :param hit_id: ID of the HIT to retrieve
     :param submitted: Boolean indicating if assignments in a state of Submitted should be retrieved, default is True
     :param approved: Boolean indicating if assignments in a state of Approved should be retrieved, default is True
@@ -444,6 +450,7 @@ def list_hits(mturk_client=None):
     """
     Retrieves all of the HITs in your account with the exception of those that have been deleted (automatically or by
     request).
+
     :param mturk_client: The MTurk client to use for this request instead of the default client
     :return: A generator containing the HITs
     """
@@ -469,7 +476,7 @@ def create_qualification_type(name, description, keywords=None, status='Active',
                               mturk_client=None):
     if mturk_client is None:
         mturk_client = client
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'name': 'Name',
         'keywords': 'Keywords',
         'description': 'Description',
@@ -489,7 +496,7 @@ def create_qualification_type(name, description, keywords=None, status='Active',
 def assign_qualification(qualification_type_id, worker_id, value=None, send_notification=False, mturk_client=None):
     if mturk_client is None:
         mturk_client = client
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'send_notification': 'SendNotification',
@@ -503,7 +510,7 @@ def assign_qualification(qualification_type_id, worker_id, value=None, send_noti
 def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_client=None):
     if mturk_client is None:
         mturk_client = client
-    params = utils.map_parameters(locals(), {
+    params = larry.core.map_parameters(locals(), {
         'qualification_type_id': 'QualificationTypeId',
         'worker_id': 'WorkerId',
         'reason': 'Reason'
@@ -514,6 +521,7 @@ def remove_qualification(qualification_type_id, worker_id, reason=None, mturk_cl
 def preview_url(hit_type_id, prod=None):
     """
     Generates a preview URL for the hit_type_id using the current environment.
+
     :param hit_type_id: The HIT type
     :param prod: True if the request is for the production environment
     :return: The preview URL
@@ -529,6 +537,7 @@ def preview_url(hit_type_id, prod=None):
 def display_task_link(hit_type_id, prod=None):
     """
     Display a link to the task group on the appropriate worker site.
+
     :param hit_type_id: The HIT type
     :param prod: True if the request is for the production environment
     """
@@ -538,12 +547,11 @@ def display_task_link(hit_type_id, prod=None):
 def add_notification(hit_type_id, destination, event_types, mturk_client=None):
     """
     Attaches a notification to the HIT type to send a message when various event_types occur
+
     :param hit_type_id: The HIT type to attach a notification to
     :param destination: An SNS ARN or a SQS URL
     :param event_types: A list of event types to trigger messages on; valid types are:
     :param mturk_client: The MTurk client to use for this request instead of the default client
-    AssignmentAccepted | AssignmentAbandoned | AssignmentReturned | AssignmentSubmitted | AssignmentRejected |
-    AssignmentApproved | HITCreated | HITExtended | HITDisposed | HITReviewable | HITExpired | Ping
     """
     if mturk_client is None:
         mturk_client = client
@@ -653,7 +661,7 @@ def prepare_requester_annotation(payload, s3_resource=None, bucket_identifier=No
     the account id (from STS) for the account being used
     :return: A string value that can be placed in the RequesterAnnotation field
     """
-    s3_resource = s3_resource if s3_resource else s3.resource
+    s3_resource = s3_resource if s3_resource else s3.__resource
 
     if isinstance(payload, Mapping):
         payload = utils.json_dumps(payload, separators=(',', ':'))
@@ -692,7 +700,7 @@ def retrieve_requester_annotation(hit_id, delete_temp_file=False, s3_resource=No
 
 
 def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None):
-    s3_resource = s3_resource if s3_resource else s3.resource
+    s3_resource = s3_resource if s3_resource else s3.__resource
     if content and len(content) > 0:
         try:
             content = utils.json_loads(content)

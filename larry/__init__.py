@@ -1,4 +1,7 @@
 import boto3
+
+import larry.core
+from larry.types import ClientError
 from larry import s3
 from larry import mturk
 from larry import sqs
@@ -7,7 +10,7 @@ from larry import sagemaker
 from larry import lmbda
 from larry import iam
 
-__version__ = "0.1.26"
+__version__ = "0.1.27"
 
 
 def _propagate_session():
@@ -49,6 +52,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session
-    __session = boto_session if boto_session is not None else boto3.session.Session(**utils.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
     _propagate_session()
+
 
