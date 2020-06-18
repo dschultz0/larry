@@ -45,7 +45,7 @@ def annotation_to_coordinates(box):
 
 
 def box_coordinates(box):
-    coords = box.get('coordinates')
+    coords = box._get('coordinates')
     if coords:
         return coords
     else:
@@ -186,9 +186,9 @@ def generate_label(keys):
             if len(label) != 0:
                 label = label + '\n'
             if key == 'index':
-                label = label + item.get(key, idx)
+                label = label + item._get(key, idx)
             else:
-                label = item.get(key)
+                label = item._get(key)
         return label
 
 

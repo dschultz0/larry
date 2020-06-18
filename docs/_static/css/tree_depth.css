@@ -1,0 +1,7 @@
+.wy-menu-vertical li.toctree-l3.current li.toctree-l4 > ul  {
+    display: none
+}
+
+.wy-menu-vertical li.toctree-l3.current li.toctree-l4.current > ul {
+    display: block
+}

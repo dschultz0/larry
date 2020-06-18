@@ -12,7 +12,7 @@ from collections import Mapping
 import larry.core
 from larry import utils
 from larry import sts
-from larry import types
+from larry.types import Types
 from larry import ClientError
 from larry.core import ResourceWrapper
 from larry.core import attach_exception_handler
@@ -57,7 +57,7 @@ def __getattr__(name):
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
-def __get_resource(): return __resource
+def _get_resource(): return __resource
 
 
 def set_session(aws_access_key_id=None,
@@ -68,6 +68,7 @@ def set_session(aws_access_key_id=None,
                 boto_session=None):
     """
     Sets the boto3 session for this module to use a specified configuration state.
+
     :param aws_access_key_id: AWS access key ID
     :param aws_secret_access_key: AWS secret access key
     :param aws__session_token: AWS temporary session token
@@ -83,10 +84,11 @@ def set_session(aws_access_key_id=None,
     __resource = __session.resource('s3')
 
 
-def __resolve_location(require_bucket=True, require_key=False, key_arg='key', allow_multiple=False):
+def _resolve_location(require_bucket=True, require_key=False, key_arg='key', allow_multiple=False):
     """
     Builds a function decorator that will reconcile methods of passing an object to a function. Allows functions
     to accept bucket/key pairs or URIs, either as named or location parameters.
+
     :param require_bucket: Require that the function call includes a bucket parameter
     :param require_key: Require that the function call includes a key parameter
     :param key_arg: The function argument that contains the key value
@@ -159,16 +161,43 @@ def __resolve_location(require_bucket=True, require_key=False, key_arg='key', al
 
 
 class Object(ResourceWrapper):
+    """
+    Wraps the boto3 S3
+    `Object <https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html#object>`_
+    resource with helper functions to make it easier to interact with objects
+    and access additional attributes.
+
+    .. code-block:: python
+
+        import larry as lry
+        obj = lry.s3.Object('bucket_name', 'key')
+
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket
+    :param key: The key of the object
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    """
+
+    @_resolve_location(require_key=True)
+    def __init__(self, *location, bucket=None, key=None, uri=None, s3_resource=None):
+        super().__init__(Bucket(bucket, s3_resource=s3_resource).Object(key=key))
 
     @property
     @attach_exception_handler
     def tags(self):
-        tags = self.meta.client.get_object_tagging(Bucket=self.bucket_name, Key=self.key).get('TagSet', [])
+        """
+        Returns dict containing a key/value pair for the tags that have been attached to the object.
+        """
+        tags = self.meta.client.get_object_tagging(Bucket=self.bucket_name, Key=self.key)._get('TagSet', [])
         return {pair['Key']: pair['Value'] for pair in tags}
 
     @property
     @attach_exception_handler
     def exists(self):
+        """
+        Attempts to load header information for the S3 object and returns true if it exists, false otherwise.
+        """
         try:
             self.load()
         except ClientError as e:
@@ -180,22 +209,52 @@ class Object(ResourceWrapper):
 
     @attach_exception_handler
     def set_acl(self, acl):
+        """
+        Assigns the provided ACL to the object.
+        """
         self.meta.client.put_object_acl(Bucket=self.bucket_name, Key=self.key, ACL=acl)
 
     def make_public(self):
+        """
+        Assigns a public-read ACL to the object to allow anyone to access it.
+        """
         self.set_acl(ACL_PUBLIC_READ)
         return self.url
 
     @property
     def url(self):
+        """
+        Returns the public URL of the object (assuming permissions have been set appropriately).
+        """
         return _object_url(self.bucket_name, self.key)
 
 
 class Bucket(ResourceWrapper):
+    """
+    Wraps the boto3 S3
+    `Bucket <https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/s3.html#bucket>`_
+    resource with helper functions to make it easier to interact with buckets
+    and access additional attributes.
+
+    .. code-block:: python
+
+        import larry as lry
+        bucket = lry.s3.Bucket('bucket_name')
+
+    :param bucket: The S3 bucket
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    """
+
+    @resolve_client(_get_resource, 's3_resource')
+    def __init__(self, bucket, s3_resource=None):
+        super().__init__(s3_resource.Bucket(bucket))
 
     @property
     @attach_exception_handler
     def exists(self):
+        """
+        Will attempt to retrieve information for the S3 bucket and returns true if it exists, false otherwise.
+        """
         try:
             create_date = self.creation_date
             return create_date is not None
@@ -207,56 +266,34 @@ class Bucket(ResourceWrapper):
 
     @property
     def url(self):
+        """
+        Returns the public URL of the bucket (assuming permissions have been set appropriately).
+        """
         return _bucket_url(self.bucket_name)
 
 
-@resolve_client(__get_resource, 's3_resource')
-def bukt(bucket, s3_resource=None):
-    """
-    Retrieves an object representing an S3 Bucket
-    :param bucket: The S3 bucket
-    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
-    :return: S3 Object
-    """
-    return Bucket(s3_resource.Bucket(bucket))
-
-
-@__resolve_location(require_key=True)
-def obj(*location, bucket=None, key=None, uri=None, s3_resource=None):
-    """
-    Retrieves an object representing an S3 Object
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket
-    :param key: The key of the object
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
-    :return: S3 Object
-    """
-    return Object(bukt(bucket, s3_resource).Object(key=key))
-
-
-@__resolve_location(require_key=True, allow_multiple=True)
+@_resolve_location(require_key=True, allow_multiple=True)
 def delete(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Deletes the object defined by the bucket/key pair or uri.
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket
-    :param key: The key of the object
+    :param key: The key of the object, this can be a single str value or a list of keys to delete
     :param uri: An s3:// path containing the bucket and key of the object
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
-    :return: Dict containing the boto3 response
     """
     if isinstance(key, list):
-        return bukt(bucket=bucket, s3_resource=s3_resource).delete_objects(Delete={'Objects': [{'Key': k} for k in key], 'Quiet': True})
+        Bucket(bucket=bucket, s3_resource=s3_resource).delete_objects(Delete={'Objects': [{'Key': k} for k in key], 'Quiet': True})
     else:
-        return obj(bucket=bucket, key=key, s3_resource=s3_resource).delete()
+        Object(bucket=bucket, key=key, s3_resource=s3_resource).delete()
 
 
-@__resolve_location(require_key=True)
-def get(*location, bucket=None, key=None, uri=None, s3_resource=None):
+@_resolve_location(require_key=True)
+def _get(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Performs a 'get' of the object defined by the bucket/key pair or uri.
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -264,13 +301,14 @@ def get(*location, bucket=None, key=None, uri=None, s3_resource=None):
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: Dict containing the Body of the object and associated attributes
     """
-    return obj(bucket=bucket, key=key, s3_resource=s3_resource).get()
+    return Object(bucket=bucket, key=key, s3_resource=s3_resource).get()
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def get_size(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
-    Returns the content_length of an S3 object.
+    Returns the number of bytes (content_length) in an S3 object.
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -278,14 +316,14 @@ def get_size(*location, bucket=None, key=None, uri=None, s3_resource=None):
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: Size in bytes
     """
-    return obj(bucket=bucket, key=key, s3_resource=s3_resource).content_length
+    return Object(bucket=bucket, key=key, s3_resource=s3_resource).content_length
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read(*location, bucket=None, key=None, uri=None, byte_count=None, s3_resource=None):
     """
-    Performs a 'get' of the object defined by the bucket/key pair or uri
-    and then performs a 'read' of the Body of that object.
+    Retrieves the contents of an S3 object
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -294,15 +332,22 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None, s3_resourc
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The bytes contained in the object
     """
-    return get(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)['Body'].read(byte_count)
+    return _get(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)['Body'].read(byte_count)
 
 
-@__resolve_location(require_key=True)
-def read_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None):
+@_resolve_location(require_key=True)
+def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and loads the
-    contents into an object of the specified type
-    :param o_type: A value defined in larry.types to load the data using
+    contents into an object of the specified type.
+
+    .. code-block:: python
+
+        import larry as lry
+        from larry.types import Types
+        np_array = lry.s3.read_as(Types.NP_ARRAY, 'my-bucket', 'my-key')
+
+    :param type_: A value from larry.types.Types to indicate how to read in the data
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -311,7 +356,7 @@ def read_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8'
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: An object representation of the data in S3
     """
-    if o_type == types.TYPE_NP_ARRAY:
+    if type_ == Types.NP_ARRAY:
         try:
             import numpy as np
             with TemporaryFile() as fp:
@@ -325,11 +370,11 @@ def read_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8'
         objct = read(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
 
         # TODO: Would a handler or local constant be a better idea here?
-        if o_type == types.TYPE_DICT:
+        if type_ == Types.DICT:
             return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
-        elif o_type == types.TYPE_STRING:
+        elif type_ == Types.STRING:
             return objct.decode(encoding)
-        elif o_type == types.TYPE_PILLOW_IMAGE:
+        elif type_ == Types.PILLOW_IMAGE:
             try:
                 from PIL import Image
                 return Image.open(BytesIO(objct))
@@ -340,11 +385,12 @@ def read_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8'
             raise TypeError('Unhandled type')
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri, decodes it to a string, and
-    splits it into lines. Returns an array containing the contents of each line in teh specified format.
+    splits it into lines. Returns an array containing the contents of each line in the specified format.
+
     :param o_type: A value defined in larry.types to load the data using
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
@@ -361,16 +407,16 @@ def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='u
     for line in lines:
         if len(line) > 0:
             # TODO: Would a handler or local constant be a better idea here?
-            if o_type == types.TYPE_DICT:
+            if o_type == Types.DICT:
                 records.append(json.loads(line, object_hook=utils.JSONDecoder))
-            elif o_type == types.TYPE_STRING:
+            elif o_type == Types.STRING:
                 records.append(line)
             else:
                 raise TypeError('Unhandled type')
     return records
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri, decodes it to a string, and
@@ -385,7 +431,6 @@ def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='u
     :param newline: The line separator to use when reading in the object
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: An object representation of the data in S3
-
     """
 
     objct = read(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
@@ -393,15 +438,15 @@ def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='u
     for line in lines:
         if len(line) > 0:
             # TODO: Would a handler or local constant be a better idea here?
-            if o_type == types.TYPE_DICT:
+            if o_type == Types.DICT:
                 yield json.loads(line, object_hook=utils.JSONDecoder)
-            elif o_type == types.TYPE_STRING:
+            elif o_type == Types.STRING:
                 yield line
             else:
                 raise TypeError('Unhandled type')
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and
@@ -415,10 +460,10 @@ def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', s3_r
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: A dict representation of the json contained in the object
     """
-    return read_as(types.TYPE_DICT, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
+    return read_as(Types.DICT, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and
@@ -432,10 +477,10 @@ def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', s3_re
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The contents of the object as a string
     """
-    return read_as(types.TYPE_STRING, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
+    return read_as(Types.STRING, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and
@@ -450,11 +495,11 @@ def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The contents of the object as a list of dict objects
     """
-    return read_list_as(types.TYPE_DICT, bucket=bucket, key=key, uri=uri,
+    return read_list_as(Types.DICT, bucket=bucket, key=key, uri=uri,
                         encoding=encoding, newline=newline, s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n', s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and
@@ -469,7 +514,7 @@ def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The contents of the object as a list of dict objects
     """
-    return read_list_as(types.TYPE_STRING, bucket=bucket, key=key, uri=uri,
+    return read_list_as(Types.STRING, bucket=bucket, key=key, uri=uri,
                         encoding=encoding, newline=newline, s3_resource=s3_resource)
 
 
@@ -511,7 +556,7 @@ def __write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, 
     if tags:
         params['Tagging'] = parse.urlencode(tags) if isinstance(tags, Mapping) else tags
 
-    obj(bucket, key, s3_resource=s3_resource).put(**params)
+    Object(bucket=bucket, key=key, s3_resource=s3_resource).put(**params)
     return compose_uri(bucket, key)
 
 
@@ -552,7 +597,7 @@ __content_type_to_pillow_format = {
 }
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
              columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
              content_length=None, metadata=None, sse=None, storage_class=None,  tags=None,
@@ -560,6 +605,7 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
+
     :param value: Object to write to S3
     :param o_type: A value defined in larry.types to write the data using
     :param location: Positional values for bucket, key, and/or uri
@@ -573,7 +619,7 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
     :param acl: The canned ACL to apply to the object
     :param content_type: Content type to apply to the file, if not present a suggested type will be applied
     :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
+        mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
     :param content_language: The language the content is in.
     :param content_length: Size of the body in bytes.
     :param metadata: A map of metadata to store with the object in S3.
@@ -584,29 +630,29 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
     :return: The URI of the object written to S3
     """
     extension = key.split('.')[-1]
-    if o_type == types.TYPE_STRING:
+    if o_type == Types.STRING:
         if content_type is None:
             content_type = __extension_types.get(extension, 'text/plain')
         objct = value
-    elif o_type == types.TYPE_DICT:
+    elif o_type == Types.DICT:
         if content_type is None:
             content_type = 'application/json'
         objct = json.dumps(value, cls=utils.JSONEncoder)
-    elif o_type == types.TYPE_PILLOW_IMAGE:
+    elif o_type == Types.PILLOW_IMAGE:
         objct = BytesIO()
         fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
         value.save(objct, fmt)
         objct.seek(0)
         if content_type is None:
             content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
-    elif o_type == types.TYPE_JSON_LINES:
+    elif o_type == Types.JSON_LINES:
         if content_type is None:
             content_type = __extension_types.get(extension, 'text/plain')
         buff = StringIO()
         for row in value:
             buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
         objct = buff.getvalue()
-    elif o_type == types.TYPE_DELIMITED:
+    elif o_type == Types.DELIMITED:
         if content_type is None:
             content_type = __extension_types.get(extension, 'text/plain')
         buff = StringIO()
@@ -632,7 +678,7 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
             for row in value:
                 line = ''
                 for i, k in enumerate(keys):
-                    value = '' if row.get(k) is None else str(row.get(k))
+                    value = '' if row._get(k) is None else str(row._get(k))
                     line = value if i == 0 else line + delimiter + value
                 buff.write(line + newline)
 
@@ -650,7 +696,7 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
                    s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
                  content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
                  storage_class=None,  tags=None, s3_resource=None, **params):
@@ -662,11 +708,11 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
 def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
     p = '' if prefix is None else prefix
     s = '' if suffix is None else suffix
-    if o_type == types.TYPE_STRING:
+    if o_type == Types.STRING:
         return (p + value + s).encode(encoding), 'text/plain'
-    elif o_type == types.TYPE_DICT:
+    elif o_type == Types.DICT:
         return (p + json.dumps(value, cls=utils.JSONEncoder) + s).encode(encoding), 'text/plain'
-    elif o_type == types.TYPE_PILLOW_IMAGE:
+    elif o_type == Types.PILLOW_IMAGE:
         objct = BytesIO()
         fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
         value.save(objct, fmt)
@@ -676,7 +722,7 @@ def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, 
         raise TypeError('Unhandled type')
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
           content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
           storage_class=None,  tags=None, s3_resource=None, **params):
@@ -706,13 +752,13 @@ def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=N
     extension = key.split('.')[-1]
     # JSON
     if isinstance(value, Mapping):
-        return write_as(value, types.TYPE_DICT, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+        return write_as(value, Types.DICT, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                         content_type=content_type, content_encoding=content_encoding,
                         content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
                         storage_class=storage_class, tags=tags, s3_resource=s3_resource)
     # Text
     elif isinstance(value, str):
-        return write_as(value, types.TYPE_STRING, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+        return write_as(value, Types.STRING, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                         content_type=content_type, content_encoding=content_encoding,
                         content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
                         storage_class=storage_class, tags=tags, s3_resource=s3_resource)
@@ -806,7 +852,7 @@ def _array_to_string(row, delimiter, indices=None):
     return line
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
                     columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
                     content_length=None, metadata=None, sse=None, storage_class=None,  tags=None,
@@ -814,6 +860,7 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
+
     :param rows: List of data to write, rows can be of type list, dict or str
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
@@ -826,7 +873,7 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
     :param headers: Headers to add to the output
     :param content_type: Content type to apply to the file, if not present a suggested type will be applied
     :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
+        mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
     :param content_language: The language the content is in.
     :param content_length: Size of the body in bytes.
     :param metadata: A map of metadata to store with the object in S3.
@@ -836,17 +883,17 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
-    return write_as(rows, types.TYPE_DELIMITED, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+    return write_as(rows, Types.DELIMITED, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                     delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
                     content_encoding=content_encoding, content_language=content_language, content_length=content_length,
                     metadata=metadata, sse=sse, storage_class=storage_class, tags=tags,
                     s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def __append(content, *location, bucket=None, key=None, uri=None, s3_resource=None):
     # load the object and build the parameters that will be used to rewrite it
-    objct = obj(bucket, key, s3_resource=s3_resource)
+    objct = Object(bucket, key, s3_resource=s3_resource)
     values = {
         'content_encoding': objct.content_encoding,
         'content_language': objct.content_language,
@@ -881,7 +928,7 @@ def __append(content, *location, bucket=None, key=None, uri=None, s3_resource=No
     })
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8',
            s3_resource=None):
     """
@@ -890,6 +937,7 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
     Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
     intended as a helper for simple operations such as capturing infrequent events and should not be used in a
     multi-threaded or multi-user environment.
+
     :param value: Data to write
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
@@ -907,7 +955,7 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
     # write out the new string
     if isinstance(value, str):
         __append(__value_bytes_as(value,
-                                  types.TYPE_STRING,
+                                  Types.STRING,
                                   encoding=encoding,
                                   suffix=newline if incl_newline else None)[0],
                  bucket=bucket, key=key, s3_resource=s3_resource)
@@ -915,7 +963,7 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
     # write out the new json
     elif isinstance(value, Mapping):
         __append(__value_bytes_as(value,
-                                  types.TYPE_DICT,
+                                  Types.DICT,
                                   encoding=encoding,
                                   suffix=newline if incl_newline else None)[0],
                  bucket=bucket, key=key, s3_resource=s3_resource)
@@ -927,10 +975,10 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
             if isinstance(v, int) or isinstance(v, float):
                 v = str(v)
             if isinstance(v, str):
-                buff.write(__value_bytes_as(v, types.TYPE_STRING, encoding=encoding,
+                buff.write(__value_bytes_as(v, Types.STRING, encoding=encoding,
                                             suffix=newline if incl_newline else None)[0])
             elif isinstance(v, Mapping):
-                buff.write(__value_bytes_as(v, types.TYPE_DICT, encoding=encoding,
+                buff.write(__value_bytes_as(v, Types.DICT, encoding=encoding,
                                             suffix=newline if incl_newline else None)[0])
             else:
                 buff.write(v)
@@ -942,7 +990,7 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
         __append(value, bucket=bucket, key=key, s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n',
               delimiter=',', columns=None, encoding='utf-8', s3_resource=None):
     """
@@ -971,7 +1019,7 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
 
     # if we're writing as a dict or string
     # iterate through if it's iterable, else write out the value
-    if o_type in (types.TYPE_DICT, types.TYPE_STRING):
+    if o_type in (Types.DICT, Types.STRING):
         if hasattr(value, '__iter__') and not isinstance(value, str) and not isinstance(value, Mapping):
             buff = BytesIO()
             for v in value:
@@ -982,13 +1030,13 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
             content = __value_bytes_as(value, o_type, encoding=encoding, suffix=newline if incl_newline else None)[0]
 
     # write out delimited values
-    elif o_type == types.TYPE_DELIMITED:
+    elif o_type == Types.DELIMITED:
         # if it's a dict or string just write them out
         if isinstance(value, Mapping):
             content = __value_mapping_to_delimited_bytes(value, columns=columns, newline=newline,
                                                          delimiter=delimiter, encoding=encoding)
         elif isinstance(value, str):
-            content = __value_bytes_as(value, types.TYPE_STRING, encoding=encoding, extension=extension)[0]
+            content = __value_bytes_as(value, Types.STRING, encoding=encoding, extension=extension)[0]
 
         # if it's a list, handle the cases where it may be a list of rows instead of just one row
         elif hasattr(value, '__iter__'):
@@ -1005,21 +1053,21 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
 
             # if it contains strings then this is just a single row of values
             elif isinstance(value[0], str):
-                content = __value_bytes_as(_array_to_string(value, delimiter, columns), types.TYPE_STRING,
+                content = __value_bytes_as(_array_to_string(value, delimiter, columns), Types.STRING,
                                            encoding=encoding, suffix=newline)[0]
 
             # if it contains inner lists, then it was a 2d array of values and we'll want to write those out
             elif hasattr(value[0], '__iter__'):
                 buff = BytesIO()
                 for v in value:
-                    buff.write(__value_bytes_as(_array_to_string(v, delimiter, columns), types.TYPE_STRING,
+                    buff.write(__value_bytes_as(_array_to_string(v, delimiter, columns), Types.STRING,
                                                 encoding=encoding, suffix=newline)[0])
                 buff.seek(0)
                 content=buff.getvalue()
 
             # else assume it was non-string values that can be written out
             else:
-                content = __value_bytes_as(_array_to_string(value, delimiter, columns), types.TYPE_STRING,
+                content = __value_bytes_as(_array_to_string(value, delimiter, columns), Types.STRING,
                                            encoding=encoding, suffix=newline)[0]
 
         # else it's hopefully some type of value that can be appended to bytes (ignoring newline)
@@ -1036,15 +1084,16 @@ def __value_mapping_to_delimited_bytes(value, columns=None, newline='\n', delimi
     for i, k in enumerate(keys):
         if i > 0:
             buff.write(delimiter)
-        buff.write(str(value.get(k, '')))
-    return __value_bytes_as(buff.getvalue(), types.TYPE_STRING, encoding=encoding, suffix=newline)
+        buff.write(str(value._get(k, '')))
+    return __value_bytes_as(buff.getvalue(), Types.STRING, encoding=encoding, suffix=newline)
 
 
-@resolve_client(__get_resource, 's3_resource')
+@resolve_client(_get_resource, 's3_resource')
 def rename(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key=None, new_uri=None,
            s3_resource=None):
     """
     Renames an object in S3.
+
     :param old_bucket: Source bucket
     :param old_key: Source key
     :param old_uri: An s3:// path containing the bucket and key of the source object
@@ -1068,11 +1117,12 @@ def rename(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key
     s3_resource.meta.client.delete_object(Bucket=old_bucket, Key=old_key)
 
 
-@resolve_client(__get_resource, 's3_resource')
+@resolve_client(_get_resource, 's3_resource')
 def copy(src_bucket=None, src_key=None, src_uri=None, new_bucket=None, new_key=None, new_uri=None,
          s3_resource=None):
     """
     Copies an object in S3.
+
     :param src_bucket: Source bucket
     :param src_key: Source key
     :param src_uri: An s3:// path containing the bucket and key of the source object
@@ -1090,10 +1140,11 @@ def copy(src_bucket=None, src_key=None, src_uri=None, new_bucket=None, new_key=N
     s3_resource.meta.client.copy({'Bucket': src_bucket, 'Key': src_key}, new_bucket, new_key)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def exists(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Checks to see if an object with the given bucket/key (or uri) exists.
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for the object
     :param key: The key of the object
@@ -1101,12 +1152,13 @@ def exists(*location, bucket=None, key=None, uri=None, s3_resource=None):
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: True if the key exists, if not, False
     """
-    return obj(bucket=bucket, key=key, s3_resource=s3_resource).exists
+    return Object(bucket=bucket, key=key, s3_resource=s3_resource).exists
 
 
 def decompose_uri(uri):
     """
     Decompose an S3 URI into a bucket and key
+
     :param uri: S3 URI
     :return: Tuple containing a bucket and key
     """
@@ -1120,6 +1172,7 @@ def decompose_uri(uri):
 def get_bucket_name(uri):
     """
     Retrieve the bucket portion from an S3 URI
+
     :param uri: S3 URI
     :return: Bucket name
     """
@@ -1129,6 +1182,7 @@ def get_bucket_name(uri):
 def get_object_key(uri):
     """
     Retrieves the key portion of an S3 URI
+
     :param uri: S3 URI
     :return: Key value
     """
@@ -1138,6 +1192,7 @@ def get_object_key(uri):
 def compose_uri(bucket, key=None):
     """
     Compose a bucket and key into an S3 URI
+
     :param bucket: Bucket name
     :param key: Object key
     :return: S3 URI string
@@ -1148,11 +1203,12 @@ def compose_uri(bucket, key=None):
         return "s3://{}/".format(bucket)
 
 
-@resolve_client(__get_resource, 's3_resource')
-@__resolve_location(key_arg='prefix')
+@resolve_client(_get_resource, 's3_resource')
+@_resolve_location(key_arg='prefix')
 def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_objects=False, s3_resource=None):
     """
     Returns a iterable of the keys in the bucket that begin with the provided prefix.
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket to query
     :param prefix: The key prefix to use in searching the bucket
@@ -1167,7 +1223,7 @@ def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_ob
         operation_parameters['Prefix'] = prefix
     page_iterator = paginator.paginate(**operation_parameters)
     for page in page_iterator:
-        for objct in page.get('Contents', []):
+        for objct in page._get('Contents', []):
             if objct['Size'] > 0 or include_empty_objects:
                 yield objct['Key']
 
@@ -1177,6 +1233,7 @@ def _find_largest_common_prefix(values):
     Searches through a list of values to find the longest possible common prefix amongst them. Useful for optimizing
     more costly searches. Supports lists of strings or tuples. If tuples are used, the first value is assumed to be
     the value to search on.
+
     :param values: List of values (strings or tuples containing a string in the first position)
     :return: String prefix common to all values
     """
@@ -1195,6 +1252,7 @@ def _find_largest_common_prefix(values):
 def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
     """
     Searches an S3 bucket for a list of keys and returns any that cannot be found.
+
     :param bucket: The S3 bucket to search
     :param keys: A list of keys to search for (strings or tuples containing a string in the first position)
     :param uris: A list of S3 URIs to search for (strings or tuples containing a string in the first position)
@@ -1218,7 +1276,7 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
     prefix = _find_largest_common_prefix(keys)
 
     # Get a list of all keys in the bucket that match the prefix
-    bucket_obj = bukt(bucket=bucket, s3_resource=s3_resource)
+    bucket_obj = Bucket(bucket=bucket, s3_resource=s3_resource)
     all_keys = []
     for objct in bucket_obj.objects.filter(Prefix=prefix):
         all_keys.append(objct.key)
@@ -1232,16 +1290,17 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
     return not_found
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl=None, **kwargs):
     """
     Retrieves the data referenced by a URL to an S3 location.
+
     :param url: URL to retrieve
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for the object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
-    :param acl:
+    :param acl: An S3 policy to apply the S3 location
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
@@ -1250,10 +1309,11 @@ def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl
         return __write(response.read(), bucket=bucket, key=key, s3_resource=s3_resource, acl=acl)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def download(file, *location, bucket=None, key=None, uri=None, use_threads=True, s3_resource=None):
     """
     Downloads the an S3 object to a directory on the local file system.
+
     :param file: The file, file-like object, or directory to download the object to
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
@@ -1264,7 +1324,7 @@ def download(file, *location, bucket=None, key=None, uri=None, use_threads=True,
     :return: Path of the local file
     """
     config = TransferConfig(use_threads=use_threads)
-    objct = obj(bucket=bucket, key=key, s3_resource=s3_resource)
+    objct = Object(bucket=bucket, key=key, s3_resource=s3_resource)
     if isinstance(file, str):
         if os.path.isdir(file):
             file = os.path.join(file, key.split('/')[-1])
@@ -1275,10 +1335,11 @@ def download(file, *location, bucket=None, key=None, uri=None, use_threads=True,
     return file
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def download_to_temp(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Downloads the an S3 object to a temp directory on the local file system.
+
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -1292,12 +1353,13 @@ def download_to_temp(*location, bucket=None, key=None, uri=None, s3_resource=Non
     return fp
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
            tags=None, s3_resource=None):
     """
     Uploads a local file to S3
+
     :param file: The file, file-like object, or directory to upload
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
@@ -1306,7 +1368,7 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
     :param acl: The canned ACL to apply to the object
     :param content_type: Content type to apply to the file
     :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
+        mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
     :param content_language: The language the content is in.
     :param content_length: Size of the body in bytes.
     :param metadata: A map of metadata to store with the object in S3.
@@ -1329,7 +1391,7 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
     if tags:
         extra['Tagging'] = parse.urlencode(tags) if isinstance(tags, Mapping) else tags
     params = {} if len(extra.keys()) == 0 else {'ExtraArgs': extra}
-    objct = obj(bucket=bucket, key=key, s3_resource=s3_resource)
+    objct = Object(bucket=bucket, key=key, s3_resource=s3_resource)
     if isinstance(file, str):
         objct.upload_file(file, **params)
     else:
@@ -1337,16 +1399,17 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
     return compose_uri(bucket, key)
 
 
-def write_temp_object(value, prefix, acl=None, s3_resource=None, bucket_identifier=None, region=None,
-                      bucket=None):
+def write_temp(value, prefix, acl=None, s3_resource=None, bucket_identifier=None, region=None,
+               bucket=None):
     """
     Write an object to a temp bucket with a unique UUID.
+
     :param value: Object to write to S3
     :param prefix: Prefix to attach ahead of the UUID as the key
     :param acl: The canned ACL to apply to the object
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :param bucket_identifier: The identifier to attach to the temp bucket that will be used for writing to s3, typically
-    the account id (from STS) for the account being used
+        the account id (from STS) for the account being used
     :param region: The s3 region to store the data in
     :param bucket: The bucket to use instead of creating/using a temp bucket
     :return: The URI of the object written to S3
@@ -1357,17 +1420,18 @@ def write_temp_object(value, prefix, acl=None, s3_resource=None, bucket_identifi
     return write(value, bucket=bucket, key=key, acl=acl, s3_resource=s3_resource)
 
 
-@__resolve_location(require_key=True)
+@_resolve_location(require_key=True)
 def make_public(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Makes the object defined by the bucket/key pair (or uri) public.
+
     :param bucket: The S3 bucket for object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URL of the object
     """
-    return obj(bucket=bucket, key=key, s3_resource=s3_resource).make_public()
+    return Object(bucket=bucket, key=key, s3_resource=s3_resource).make_public()
 
 
 def _object_url(bucket, key):
@@ -1378,10 +1442,11 @@ def _bucket_url(bucket):
     return 'https://{}.s3.amazonaws.com'.format(bucket)
 
 
-@__resolve_location()
+@_resolve_location()
 def get_public_url(*location, bucket=None, key=None, uri=None):
     """
     Returns the public URL of an S3 object (assuming it's public).
+
     :param bucket: The S3 bucket for object
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
@@ -1396,6 +1461,7 @@ def get_public_url(*location, bucket=None, key=None, uri=None):
 def create_bucket(bucket, acl=ACL_PRIVATE, region=None, s3_resource=None):
     """
     Create a bucket in S3 and waits until it has been created.
+
     :param bucket: The name of the bucket
     :param acl: The canned ACL to apply to the object
     :param region: The region to location the S3 bucket, defaults to the region of the current session
@@ -1403,7 +1469,7 @@ def create_bucket(bucket, acl=ACL_PRIVATE, region=None, s3_resource=None):
     """
     if region is None:
         region = __session.region_name
-    bucket_obj = bukt(bucket=bucket, s3_resource=s3_resource)
+    bucket_obj = Bucket(bucket=bucket, s3_resource=s3_resource)
     bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
     bucket_obj.wait_until_exists()
 
@@ -1411,10 +1477,11 @@ def create_bucket(bucket, acl=ACL_PRIVATE, region=None, s3_resource=None):
 def delete_bucket(bucket, s3_resource=None):
     """
     Delete an S3 bucket.
+
     :param bucket: The name of the bucket
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     """
-    bucket_obj = bukt(bucket=bucket, s3_resource=s3_resource)
+    bucket_obj = Bucket(bucket=bucket, s3_resource=s3_resource)
     bucket_obj.delete()
     bucket_obj.wait_until_not_exists()
 
@@ -1424,10 +1491,11 @@ def get_temp_bucket(region=None, s3_resource=None, bucket_identifier=None):
     Create a bucket that will be used as temp storage for larry commands.
     The bucket will be created in the region associated with the current session
     using a name based on the current session account id and region.
+
     :param region: Region to locate the temp bucket
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :param bucket_identifier: The bucket identifier to use as a unique identifier for the bucket, defaults to the
-    account id associated with the session
+        account id associated with the session
     :return: The name of the created bucket
     """
     if region is None:

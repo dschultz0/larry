@@ -1,0 +1,93 @@
+.. py:module:: larry.s3
+.. py:currentmodule:: larry.s3
+
+:py:mod:`s3`
+======================
+
+The :py:mod:`~larry.s3` module provides access to a library of tools for reading and
+writing objects of various types to S3.
+
+
+Buckets, Object Keys, and URIs
+------------------------------
+
+Examples
+----------------------
+
+Reading and writing Python dict objects
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Reading and writing JSON-Lines files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Working with files
+^^^^^^^^^^^^^^^^^^
+
+Reading and writing other file types
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Functions
+----------------------
+
+Read
+^^^^
+
+.. autofunction:: read
+.. autofunction:: read_as
+.. autofunction:: read_list_as
+.. autofunction:: read_iter_as
+.. autofunction:: read_dict
+.. autofunction:: read_str
+.. autofunction:: read_list_of_dict
+.. autofunction:: read_list_of_str
+
+Write
+^^^^^
+
+.. autofunction:: write
+.. autofunction:: write_as
+.. autofunction:: write_delimited
+.. autofunction:: append
+.. autofunction:: append_as
+.. autofunction:: write_temp
+
+File
+^^^^
+
+.. autofunction:: fetch
+.. autofunction:: download
+.. autofunction:: download_to_temp
+.. autofunction:: upload
+.. autofunction:: download_to_zip
+
+S3 URI
+^^^^^^
+
+.. autofunction:: decompose_uri
+.. autofunction:: get_bucket_name
+.. autofunction:: get_object_key
+.. autofunction:: compose_uri
+.. autofunction:: file_name_portion
+
+.. autofunction:: delete
+.. autofunction:: get_size
+.. autofunction:: rename
+.. autofunction:: copy
+.. autofunction:: exists
+.. autofunction:: list_objects
+.. autofunction:: find_keys_not_present
+.. autofunction:: make_public
+.. autofunction:: get_public_url
+.. autofunction:: create_bucket
+.. autofunction:: delete_bucket
+.. autofunction:: get_temp_bucket
+
+
+The Bucket Class
+----------------------
+
+The Object Class
+----------------------
+
+
+

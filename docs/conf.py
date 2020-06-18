@@ -8,7 +8,7 @@
 
 # -- Path setup --------------------------------------------------------------
 
-# If extensions (or modules to document with autodoc) are in another directory,
+# If extensions (or reference to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
@@ -24,9 +24,9 @@ copyright = '2020, Dave Schultz'
 author = 'Dave Schultz'
 
 # The short X.Y version
-version = ''
+version = '0.2'
 # The full version, including alpha/beta/rc tags
-release = '0.2'
+release = '0.2alpha'
 
 
 # -- General configuration ---------------------------------------------------
@@ -38,10 +38,14 @@ release = '0.2'
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
+import sphinx_rtd_theme
+
 extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
     'sphinx.ext.githubpages',
+    'sphinx_rtd_theme',
+    'sphinx.ext.intersphinx'
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -77,13 +81,16 @@ pygments_style = 'sphinx'
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = 'alabaster'
+html_theme = 'sphinx_rtd_theme'
 
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
 # html_theme_options = {}
+html_theme_options = {
+    'navigation_depth': 6
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -159,3 +166,8 @@ texinfo_documents = [
 
 
 # -- Extension configuration -------------------------------------------------
+
+# Required to add functions to the navigation
+def setup(app):
+    app.add_js_file("js/script.js")
+    app.add_css_file("css/tree_depth.css")

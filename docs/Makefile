@@ -3,6 +3,7 @@
 
 # You can set these variables from the command line.
 SPHINXOPTS    = -E -a
+#SPHINXOPTS    =
 SPHINXBUILD   = sphinx-build
 SPHINXPROJ    = larry
 SOURCEDIR     = .

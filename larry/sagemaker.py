@@ -105,7 +105,7 @@ class labeling:
                     pass
 
         if pre_lambda:
-            template_input = lmbda.invoke_as_dict(pre_lambda, {'dataObject': lambda_input}).get('taskInput')
+            template_input = lmbda.invoke_as_dict(pre_lambda, {'dataObject': lambda_input})._get('taskInput')
 
         if isinstance(template_input, Mapping):
             template_input = json.dumps(template_input)
@@ -113,7 +113,7 @@ class labeling:
         result = client.render_ui_template(UiTemplate={'Content': template},
                                            Task={'Input': template_input},
                                            RoleArn=role)
-        return result['RenderedContent'], result.get('Errors')
+        return result['RenderedContent'], result._get('Errors')
 
     @staticmethod
     def _input_config(manifest_uri, free_of_pii=False, free_of_adult_content=True):
@@ -299,7 +299,7 @@ class labeling:
         for job_name in job_names:
             results = labeling.get_results(output_uri, job_name)
             for item in results:
-                if item[job_name + '-metadata'].get('failure-reason') is None or exclude_failures is False:
+                if item[job_name + '-metadata']._get('failure-reason') is None or exclude_failures is False:
                     if rename_label_to:
                         item[rename_label_to] = item.pop(job_name)
                         item[rename_label_to + '-metadata'] = item.pop(job_name + '-metadata')
@@ -311,7 +311,7 @@ class labeling:
         failures = []
         reasons = {}
         for item in manifest:
-            failure_reason = item[attribute_name+'-metadata'].get('failure-reason')
+            failure_reason = item[attribute_name+'-metadata']._get('failure-reason')
             if failure_reason:
                 failures.append(item)
                 failure_reason = failure_reason.replace(item['source-ref'], '<file>')

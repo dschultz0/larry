@@ -1,6 +1,7 @@
-from larry import ClientError
+from larry.types import ClientError
 from botocore.exceptions import ClientError as BotoClientError
 import inspect
+from functools import wraps
 
 
 def is_arn(value):
@@ -14,6 +15,7 @@ def attach_exception_handler(func):
     :param func: The function being decorated
     :return: Decorated function
     """
+    @wraps(func)
     def exception_handler(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -34,6 +36,7 @@ def resolve_client(client_callback, key):
         func_args = inspect.getfullargspec(func).args
         arg_index = func_args.index(key) if key in func_args else None
 
+        @wraps(func)
         def boto_obj_handler(*args, **kwargs):
             if arg_index is not None and len(args) > arg_index:
                 if args[arg_index] is None:
@@ -78,6 +81,6 @@ def copy_non_null_keys(param_list):
 def map_parameters(parameters, key_map):
     result = {}
     for k, i in key_map.items():
-        if parameters.get(k) is not None:
+        if parameters._get(k) is not None:
             result[i] = parameters[k]
     return result

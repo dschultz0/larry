@@ -39,29 +39,13 @@ object.
 **larry** let's you spend less time running to StackOverflow for sample code to perform basic operations so you can
 focus on the task at hand.
 
-Getting Started
-------------------
-
 .. toctree::
     :maxdepth: 2
 
     installation
     configuration
     exceptions
-
-API Reference
------------------
-
-.. toctree::
-    :maxdepth: 2
-
-    modules/iam
-    modules/lambda
-    modules/mturk
-    modules/s3
-    modules/sagemaker
-    modules/sqs
-    modules/sts
+    reference/index.rst
 
 Indices and tables
 ==================

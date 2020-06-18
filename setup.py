@@ -8,7 +8,7 @@ setuptools.setup(
     version=lry.__version__,
     author="Dave Schultz",
     author_email="djschult@gmail.com",
-    description="Library of helper modules for common data tasks using AWS resources such as S3, MTurk and others",
+    description="Library of helper reference for common data tasks using AWS resources such as S3, MTurk and others",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/dschultz0/larry",

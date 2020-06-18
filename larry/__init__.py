@@ -9,6 +9,7 @@ from larry import sts
 from larry import sagemaker
 from larry import lmbda
 from larry import iam
+from larry import textract
 
 __version__ = "0.1.27"
 
@@ -21,6 +22,7 @@ def _propagate_session():
     sagemaker.set_session(boto_session=__session)
     lmbda.set_session(boto_session=__session)
     iam.set_session(boto_session=__session)
+    textract.set_session(boto_session=__session)
 
 
 # A local instance of the boto3 session to use

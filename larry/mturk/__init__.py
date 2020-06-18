@@ -328,11 +328,11 @@ def create_hit(title=None,
         params['Question'] = render_jinja_template_question(template_context, template_uri=question_template_uri)
 
     if hit_type_id:
-        return HIT(mturk_client.create_hit_with_hit_type(**params).get('HIT'),
+        return HIT(mturk_client.create_hit_with_hit_type(**params)._get('HIT'),
                    mturk_client=mturk_client,
                    production=mturk_client_environment(mturk_client))
     else:
-        return HIT(mturk_client.create_hit(**params).get('HIT'),
+        return HIT(mturk_client.create_hit(**params)._get('HIT'),
                    mturk_client=mturk_client,
                    production=mturk_client_environment(mturk_client))
 
@@ -358,7 +358,7 @@ def create_hit_type(title,
     })
     if reward_cents:
         params['Reward'] = str(reward_cents / 100)
-    return mturk_client.create_hit_type(**params).get('HITTypeId')
+    return mturk_client.create_hit_type(**params)._get('HITTypeId')
 
 
 def _get_assignment(assignment_id, mturk_client=None):
@@ -438,11 +438,11 @@ def list_assignments_for_hit(hit_id, submitted=True, approved=True, rejected=Tru
                                                              AssignmentStatuses=statuses)
         else:
             response = mturk_client.list_assignments_for_hit(HITId=hit_id, AssignmentStatuses=statuses)
-        if response.get('NextToken'):
+        if response._get('NextToken'):
             next_token = response['NextToken']
         else:
             pages_to_get = False
-        for assignment in response.get('Assignments', []):
+        for assignment in response._get('Assignments', []):
             yield Assignment(assignment)
 
 
@@ -463,11 +463,11 @@ def list_hits(mturk_client=None):
             response = mturk_client.list_hits(NextToken=next_token)
         else:
             response = mturk_client.list_hits()
-        if response.get('NextToken'):
+        if response._get('NextToken'):
             next_token = response['NextToken']
         else:
             pages_to_get = False
-        for hit in response.get('HITs', []):
+        for hit in response._get('HITs', []):
             yield HIT(hit, mturk_client, mturk_client_environment(mturk_client))
 
 
@@ -696,7 +696,7 @@ def retrieve_requester_annotation(hit_id, delete_temp_file=False, s3_resource=No
     if mturk_client is None:
         mturk_client = client
     hit, p = _get_hit(hit_id, mturk_client=mturk_client)
-    return parse_requester_annotation(hit.get('RequesterAnnotation', ''), delete_temp_file, s3_resource)
+    return parse_requester_annotation(hit._get('RequesterAnnotation', ''), delete_temp_file, s3_resource)
 
 
 def parse_requester_annotation(content, delete_temp_file=False, s3_resource=None):
@@ -967,8 +967,8 @@ def retrieve_hit_results_to_dict(items, hit_id_attribute='HITId', assignments_at
             stats[status] = stats.get(status, 0) + 1
             item[assignments_attribute] = list(list_assignments_for_hit(hit_id))
             completed = len(item[assignments_attribute])
-            stats['CompletedAssignments'] = stats.get('CompletedAssignments', 0) + completed
-            stats['MaxAssignments'] = stats.get('MaxAssignments', 0) + hit['MaxAssignments']
+            stats['CompletedAssignments'] = stats._get('CompletedAssignments', 0) + completed
+            stats['MaxAssignments'] = stats._get('MaxAssignments', 0) + hit['MaxAssignments']
             if completed < hit['MaxAssignments'] and status == 'Reviewable':
-                stats['ExpiredAssignments'] = stats.get('ExpiredAssignments', 0) - completed + hit['MaxAssignments']
+                stats['ExpiredAssignments'] = stats._get('ExpiredAssignments', 0) - completed + hit['MaxAssignments']
     return stats

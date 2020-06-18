@@ -1,6 +1,6 @@
 import larry.core
 from larry import utils
-from larry import types
+from larry.types import Types
 from larry.s3 import decompose_uri
 import boto3
 import inspect
@@ -303,7 +303,7 @@ def delete(name):
     client.delete_function(FunctionName=name)
 
 
-def as_function(name, o_type=types.TYPE_DICT):
+def as_function(name, o_type=Types.DICT):
     """
     Creates a python function that will invoke the Lambda and return the results in the specified format.
     :param name: The name or ARN of the function
@@ -363,9 +363,9 @@ def invoke_as(name, o_type, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPON
         payload, log = result
     else:
         payload = result
-    if o_type == types.TYPE_STRING:
+    if o_type == Types.STRING:
         result = payload.read().decode('utf-8')
-    elif o_type == types.TYPE_DICT:
+    elif o_type == Types.DICT:
         result = json.loads(payload.read(), object_hook=utils.JSONDecoder)
     else:
         raise Exception('Unhandled type')
@@ -386,7 +386,7 @@ def invoke_as_str(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, 
     function in the context object.
     :return: The response as a string, also the logs if requested
     """
-    return invoke_as(name, types.TYPE_STRING, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
+    return invoke_as(name, Types.STRING, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
 
 
 def invoke_as_dict(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
@@ -400,7 +400,7 @@ def invoke_as_dict(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE,
     function in the context object.
     :return: The response as a dict, also the logs if requested
     """
-    return invoke_as(name, types.TYPE_DICT, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
+    return invoke_as(name, Types.DICT, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
 
 
 def _get_function_calls(func, built_ins=False):
@@ -461,7 +461,7 @@ class Lambda(UserDict):
     def from_create(cls, response):
         return cls(response)
 
-    def as_function(self, o_type=types.TYPE_DICT):
+    def as_function(self, o_type=Types.DICT):
         """
         Creates a python function that will invoke the Lambda and return the results in the specified format.
         :param o_type: A value defined in larry.types to specify how the Lambda response will be read
@@ -568,15 +568,15 @@ class Lambda(UserDict):
 
     @property
     def dead_letter_arn(self):
-        return self['DeadLetterConfig'].get('TargetArn')
+        return self['DeadLetterConfig']._get('TargetArn')
 
     @property
     def environment_variables(self):
-        return self['Environment'].get('Variables', {})
+        return self['Environment']._get('Variables', {})
 
     @property
     def environment_error(self):
-        return self['Environment'].get('Error', {})
+        return self['Environment']._get('Error', {})
 
     @property
     def master_arn(self):
@@ -616,11 +616,11 @@ class Lambda(UserDict):
 
     @property
     def code_repository_type(self):
-        return self['Code'].get('RepositoryType')
+        return self['Code']._get('RepositoryType')
 
     @property
     def code_location(self):
-        return self['Code'].get('Location')
+        return self['Code']._get('Location')
 
     @property
     def tags(self):
@@ -628,4 +628,4 @@ class Lambda(UserDict):
 
     @property
     def reserved_concurrent_executions(self):
-        return self['Concurrency'].get('ReservedConcurrentExecutions')
+        return self['Concurrency']._get('ReservedConcurrentExecutions')

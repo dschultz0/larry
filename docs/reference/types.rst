@@ -1,7 +1,7 @@
-S3
+Types
 =================================
 
-.. automodule:: larry.s3
+.. automodule:: larry.types
     :members:
     :undoc-members:
 
