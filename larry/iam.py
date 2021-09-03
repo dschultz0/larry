@@ -13,9 +13,19 @@ __resource = None
 __session = boto3.session.Session()
 
 
+def __getattr__(name):
+    if name == 'session':
+        return __session
+    elif name == 'client':
+        return __resource.meta.client
+    elif name == 'resource':
+        return __resource
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
 def set_session(aws_access_key_id=None,
                 aws_secret_access_key=None,
-                aws__session_token=None,
+                aws_session_token=None,
                 region_name=None,
                 profile_name=None,
                 boto_session=None):
@@ -23,7 +33,7 @@ def set_session(aws_access_key_id=None,
     Sets the boto3 session for this module to use a specified configuration state.
     :param aws_access_key_id: AWS access key ID
     :param aws_secret_access_key: AWS secret access key
-    :param aws__session_token: AWS temporary session token
+    :param aws_session_token: AWS temporary session token
     :param region_name: Default region when creating new connections
     :param profile_name: The name of a profile to use
     :param boto_session: An existing session to use
@@ -31,7 +41,7 @@ def set_session(aws_access_key_id=None,
     """
     global __session, __resource
     __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
-    resource = __session.resource('iam')
+    __resource = __session.resource('iam')
 
 
 def __assume_role_service_policy(service):
@@ -51,6 +61,19 @@ def __assume_role_service_policy(service):
                 "Action": "sts:AssumeRole"}
         ]
     })
+
+
+def iter_roles(path_prefix=None):
+    params = {}
+    if path_prefix:
+        params['PathPrefix'] = path_prefix
+    remaining_results = True
+    while remaining_results:
+        response = __resource.meta.client.list_roles(**params)
+        for rl in response.get('Roles', []):
+            yield rl
+        remaining_results = response.get('IsTruncated', False)
+        params['Marker'] = response.get('Marker')
 
 
 def policy(name_or_arn):

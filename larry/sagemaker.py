@@ -1,8 +1,10 @@
 import json
 import boto3
 import posixpath
+import base64
 
 import larry.core
+from larry.core import copy_non_null_keys, resolve_client
 from larry import utils
 from larry import s3
 from larry import lmbda
@@ -11,9 +13,8 @@ from larry.core import is_arn
 from botocore.exceptions import ClientError
 from larry.utils.image import scale_image_to_size
 from collections import Mapping
-import warnings
 
-client = None
+__client = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
 
@@ -34,13 +35,42 @@ def set_session(aws_access_key_id=None,
     :param boto_session: An existing session to use
     :return: None
     """
-    global __session, client
+    global __session, __client
     __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
-    client = __session.client('sagemaker')
+    __client = __session.client('sagemaker')
+
+
+def __getattr__(name):
+    if name == 'session':
+        return __session
+    elif name == 'client':
+        return __client
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+def _get_client():
+    return __client
 
 
 def _resolve_region(region):
     return __session.region_name if region is None else region
+
+
+class notebook:
+
+    @staticmethod
+    @resolve_client(_get_client, 'client')
+    def update_lifecycle_config(name, on_start=None, on_create=None, client=None):
+        if on_create is None and on_start is None:
+            raise TypeError('A value for OnCreate or OnStart must be provided')
+        params = {
+            'NotebookInstanceLifecycleConfigName': name
+        }
+        if on_create:
+            params['OnCreate'] = {'Content': base64.b64encode(on_create.encode('ascii')).decode('ascii')}
+        if on_start:
+            params['OnStart'] = {'Content': base64.b64encode(on_start.encode('ascii')).decode('ascii')}
+        client.update_notebook_instance_lifecycle_config(**params)
 
 
 class labeling:
@@ -92,7 +122,7 @@ class labeling:
         if '<' not in template or '>' not in template:
 
             # If the template is a uri use that
-            parts = s3.decompose_uri(template)
+            parts = s3.split_uri(template)
             if parts[0] is not None and parts[1] is not None:
                 template = s3.read_str(template)
 
@@ -265,7 +295,7 @@ class labeling:
     def get_worker_responses(output_uri, job_name):
         by_worker = {}
         by_item = {}
-        bucket_name, k = s3.decompose_uri(output_uri)
+        bucket_name, k = s3.split_uri(output_uri)
         for response_key in s3.list_objects(uri=posixpath.join(output_uri, job_name, 'annotations/worker-response')):
             response_obj = s3.read_dict(bucket_name, response_key)
             item_id = response_key.split('/')[-2]
@@ -390,7 +420,7 @@ class labeling:
             img, scalar = scale_image_to_size(uri=new_item['source-ref'])
             if scalar is not None:
                 if uri_prefix:
-                    (bucket, key_prefix) = s3.decompose_uri(uri_prefix)
+                    (bucket, key_prefix) = s3.split_uri(uri_prefix)
                 if key_prefix is None:
                     key_prefix = 'labeling_temp_images/'
                 uri = s3.write_temp_object(img, key_prefix, bucket=bucket)

@@ -1,5 +1,5 @@
 from larry.core import copy_non_null_keys, resolve_client
-from larry.s3 import decompose_uri
+from larry.s3 import split_uri
 from larry.types import Box
 import boto3
 import io
@@ -62,7 +62,7 @@ def detect_text(file=None, image=None, bucket=None, key=None, uri=None, client=N
             file.save(objct, format='PNG')
             objct.seek(0)
             document['Bytes'] = file.read()
-    (bucket, key) = decompose_uri(uri) if uri else (bucket, key)
+    (bucket, key) = split_uri(uri) if uri else (bucket, key)
     if bucket and key:
         document['S3Object'] = {'Bucket': bucket, 'Name': key}
     response = client.detect_document_text(**params)
@@ -76,32 +76,75 @@ def detect_lines(file=None, image=None, bucket=None, key=None, uri=None, size=No
     return [_block_to_box(element, width, height) for element in blocks if element['BlockType'] == 'LINE']
 
 
-def _block_to_box(block, height, width):
+def _block_to_box(block, width, height):
     return Box.from_position(block['Geometry']['BoundingBox'], as_ratio=True, height=height, width=width,
                              text=block['Text'], confidence=block['Confidence'])
 
 
 @resolve_client(__get_client, 'client')
 def start_text_detection(bucket=None, key=None, uri=None, client=None):
-    (bucket, key) = decompose_uri(uri) if uri else (bucket, key)
+    (bucket, key) = split_uri(uri) if uri else (bucket, key)
     return client.start_document_text_detection(DocumentLocation={
         'S3Object': {
             'Bucket': bucket,
             'Name': key
         }
-    })
+    }).get('JobId')
+
+
+@resolve_client(__get_client, 'client')
+def get_detected_text_detail(job_id, client=None):
+    response = client.get_document_text_detection(JobId=job_id)
+    pages = response.get('DocumentMetadata', {}).get('Pages')
+    status = response['JobStatus']
+    warnings = response.get('Warnings')
+    message = response.get('StatusMessage')
+    if status in ['SUCCEEDED', 'PARTIAL_SUCCESS', 'FAILED']:
+        return True, _block_iterator(job_id, response, client), pages, warnings, message
+    else:
+        return False, None, None, None, None
 
 
 @resolve_client(__get_client, 'client')
 def get_detected_text(job_id, client=None):
-    response = client.get_document_text_detection(JobId=job_id)
-    return response
+    complete, blocks, pages, warnings, message = get_detected_text_detail(job_id, client=client)
+    return blocks
+
+
+def _block_iterator(job_id, first_response, client):
+    response = first_response
+    blocks_to_retrieve = 'Blocks' in first_response
+    while blocks_to_retrieve:
+        for block in response['Blocks']:
+            yield block
+        if 'NextToken' in response:
+            response = client.get_document_text_detection(JobId=job_id, NextToken=response['NextToken'])
+        else:
+            blocks_to_retrieve = False
+
+
+def get_detected_lines_detail(job_id, size=None, width=None, height=None, client=None):
+    complete, blocks, pages, warnings, message = get_detected_text_detail(job_id, client=client)
+    if not complete:
+        return complete, blocks, pages, warnings, message
+    else:
+        (width, height) = size if size else (width, height)
+        return complete, _line_iterator(blocks, width, height), pages, warnings, message
 
 
 def get_detected_lines(job_id, size=None, width=None, height=None, client=None):
-    (width, height) = size if size else (width, height)
-    response = get_detected_text(job_id=job_id, client=client)
-    if 'Blocks' in response:
-        return [_block_to_box(element, width, height) for element in response['Blocks'] if element['BlockType'] == 'LINE']
-    else:
-        return None
+    complete, blocks, pages, warnings, message = get_detected_lines_detail(job_id,
+                                                                           size,
+                                                                           width,
+                                                                           height,
+                                                                           client=client)
+    return blocks
+
+
+def _line_iterator(blocks, width=None, height=None):
+    for block in blocks:
+        if block['BlockType'] == 'LINE':
+            if width and height:
+                yield _block_to_box(block, width, height).data
+            else:
+                yield block

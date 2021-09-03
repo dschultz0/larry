@@ -57,9 +57,9 @@ class S3Tests(unittest.TestCase):
         lry.s3.fetch(IMAGE_URL, BUCKET, PATH_PREFIX + 'delete_test.jpg')
         lry.s3.delete(uri=uri)
         lry.s3.fetch(IMAGE_URL, BUCKET, PATH_PREFIX + 'delete_test.jpg')
-        lry.s3.delete(o.bucket_name, o.key)
+        lry.s3.delete(o.uri_bucket, o.key)
         lry.s3.fetch(IMAGE_URL, BUCKET, PATH_PREFIX + 'delete_test.jpg')
-        lry.s3.delete(bucket=o.bucket_name, key=o.key)
+        lry.s3.delete(bucket=o.uri_bucket, key=o.key)
         with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
@@ -86,8 +86,8 @@ class S3Tests(unittest.TestCase):
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete3.txt'),
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete4.txt'),
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete5.txt')]
-        bucket = lry.s3.decompose_uri(uris[0])[0]
-        keys = [lry.s3.decompose_uri(uri)[1] for uri in uris]
+        bucket = lry.s3.split_uri(uris[0])[0]
+        keys = [lry.s3.split_uri(uri)[1] for uri in uris]
         lry.s3.delete(bucket, keys)
         uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
@@ -101,10 +101,10 @@ class S3Tests(unittest.TestCase):
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
     def test_get_size(self):
-        self.assertGreater(lry.s3.get_size(URI), 10000)
-        self.assertGreater(lry.s3.get_size(uri=URI), 10000)
-        self.assertGreater(lry.s3.get_size(BUCKET, KEY), 10000)
-        self.assertGreater(lry.s3.get_size(bucket=BUCKET, key=KEY), 10000)
+        self.assertGreater(lry.s3.size(URI), 10000)
+        self.assertGreater(lry.s3.size(uri=URI), 10000)
+        self.assertGreater(lry.s3.size(BUCKET, KEY), 10000)
+        self.assertGreater(lry.s3.size(bucket=BUCKET, key=KEY), 10000)
 
     def test_readwrite_dict(self):
         key = PATH_PREFIX + 'dict.json'

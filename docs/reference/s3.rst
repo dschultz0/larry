@@ -4,12 +4,36 @@
 :py:mod:`s3`
 ======================
 
-The :py:mod:`~larry.s3` module provides access to a library of tools for reading and
-writing objects of various types to S3.
+The :py:mod:`~larry.s3` module provides a variety of tools for interacting with S3 Buckets and Objects in ways that
+are more accessible to Python users. Many Python types can be written and read from S3 without the need
+to perform any additional manipulation of the data.
 
-
-Buckets, Object Keys, and URIs
+Buckets, Keys, and URIs
 ------------------------------
+S3 storage revolves around two identifiers, a *bucket* and a *key*. A *bucket* is a location in one of the AWS regions
+that is owned by your account. A *key* identifies an object within that bucket. S3 doesn't technically have any
+directories like a file system, but it's not uncommon to assign keys that denote a file structure such as
+*my-dir/sub-dir/object.txt*. When you read or write a file from S3 the system expects you to provide a bucket name and
+key to denote the location you're trying to access.
+
+It's not uncommon for other AWS services to use S3 URIs instead of buckets and keys to denote the location of data.
+Those URIs take the form of *s3://my-bucket/my-dir/sub-dir/object.txt* where the bucket name is *my-bucket* and the
+key is *my-dir/sub-dir/object.txt*. Most operations in this module can handle either URIs or bucket/key pairs.
+
+.. code-block:: python
+
+    import larry as lry
+    value = lry.s3.read_str(bucket='my-bucket', key='my-dir/sub-dir/object.txt')
+    value = lry.s3.read_str(uri='s3://my-bucket/my-dir/sub-dir/object.txt')
+
+Locations can be provided using named parameters as shown above or using positional values as shown below.
+
+.. code-block:: python
+
+    import larry as lry
+    value = lry.s3.read_str('my-bucket', 'my-dir/sub-dir/object.txt')
+    value = lry.s3.read_str('s3://my-bucket/my-dir/sub-dir/object.txt')
+
 
 Examples
 ----------------------
@@ -55,39 +79,57 @@ File
 ^^^^
 
 .. autofunction:: fetch
+.. autofunction:: upload
 .. autofunction:: download
 .. autofunction:: download_to_temp
-.. autofunction:: upload
 .. autofunction:: download_to_zip
 
-S3 URI
-^^^^^^
+URI, URL and path
+^^^^^^^^^^^^^^^^^
 
-.. autofunction:: decompose_uri
-.. autofunction:: get_bucket_name
-.. autofunction:: get_object_key
-.. autofunction:: compose_uri
-.. autofunction:: file_name_portion
+.. autofunction:: split_uri
+.. autofunction:: uri_bucket
+.. autofunction:: uri_key
+.. autofunction:: join_uri
+.. autofunction:: basename
+.. autofunction:: basename_split
+.. autofunction:: url
+
+Utilities
+^^^^^^^^^
 
 .. autofunction:: delete
-.. autofunction:: get_size
-.. autofunction:: rename
+.. autofunction:: size
+.. autofunction:: move
 .. autofunction:: copy
 .. autofunction:: exists
 .. autofunction:: list_objects
 .. autofunction:: find_keys_not_present
 .. autofunction:: make_public
-.. autofunction:: get_public_url
 .. autofunction:: create_bucket
 .. autofunction:: delete_bucket
-.. autofunction:: get_temp_bucket
+.. autofunction:: temp_bucket
 
 
 The Bucket Class
 ----------------------
 
+.. autoclass:: Bucket
+
+.. autofunction:: larry.s3.Bucket.exists
+.. autofunction:: larry.s3.Bucket.url
+.. autofunction:: larry.s3.Bucket.website
+
+
 The Object Class
 ----------------------
 
+.. autoclass:: Object
+
+.. autofunction:: larry.s3.Object.tags
+.. autofunction:: larry.s3.Object.exists
+.. autofunction:: larry.s3.Object.set_acl
+.. autofunction:: larry.s3.Object.make_public
+.. autofunction:: larry.s3.Object.url
 
 

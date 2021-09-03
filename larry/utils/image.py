@@ -12,7 +12,7 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
         if image:
             src_bytes = _image_byte_count(image)
         else:
-            src_bytes = s3.get_size(bucket, key, uri)
+            src_bytes = s3.size(bucket, key, uri)
             image = s3.read_as(types.TYPE_PILLOW_IMAGE, bucket, key, uri)
         x, y = image.size
         src_pixels = x * y
@@ -45,7 +45,7 @@ def annotation_to_coordinates(box):
 
 
 def box_coordinates(box):
-    coords = box._get('coordinates')
+    coords = box.get('coordinates')
     if coords:
         return coords
     else:
@@ -113,10 +113,10 @@ def render_boxes(boxes,
                  get_box=None,
                  color_index=None):
     try:
-        from PIL import ImageDraw, ImageFont
+        from PIL import ImageDraw, ImageFont, Image
 
         if image_uri:
-            image = s3.read_as(types.TYPE_PILLOW_IMAGE, uri=image_uri)
+            image = s3.read_as(Image, uri=image_uri)
         # Change palette mode images to RGB so that standard palette colors can be drawn on them
         if image.mode == 'P':
             image = image.convert(mode='RGB')
@@ -130,7 +130,7 @@ def render_boxes(boxes,
         draw = ImageDraw.Draw(image)
 
         # TODO Find a better way to pull in fonts
-        font = ImageFont.truetype("/usr/share/fonts/dejavu/DejaVuSans.ttf", size=label_size)
+        font = ImageFont.truetype("arial.ttf", size=label_size)
 
         for idx, item in enumerate(boxes):
             if annotation_filter is None or annotation_filter(idx, item):
@@ -186,9 +186,9 @@ def generate_label(keys):
             if len(label) != 0:
                 label = label + '\n'
             if key == 'index':
-                label = label + item._get(key, idx)
+                label = label + item.get(key, idx)
             else:
-                label = item._get(key)
+                label = item.get(key)
         return label
 
 

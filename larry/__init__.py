@@ -10,8 +10,9 @@ from larry import sagemaker
 from larry import lmbda
 from larry import iam
 from larry import textract
+from larry import dynamo
 
-__version__ = "0.1.27"
+__version__ = "0.2.2"
 
 
 def _propagate_session():
@@ -23,6 +24,7 @@ def _propagate_session():
     lmbda.set_session(boto_session=__session)
     iam.set_session(boto_session=__session)
     textract.set_session(boto_session=__session)
+    dynamo.set_session(boto_session=__session)
 
 
 # A local instance of the boto3 session to use

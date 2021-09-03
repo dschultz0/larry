@@ -576,6 +576,43 @@ def expire_hit(hit_id, mturk_client=None):
     update_expiration(hit_id, datetime.datetime.now(), mturk_client)
 
 
+def list_workers_with_qualification_type(qualification_type_id,
+                                        granted_only=False,
+                                        revoked_only=False,
+                                        mturk_client=None):
+    """
+    Returns all of the Workers that have been associated with a given qualification type.
+
+    :param qualification_type_id: The qualification type to retrieve
+    :param granted_only: Only retrieve qualifications that have been granted
+    :param revoked_only: Only retrieve qualifications that have been revoked
+    :param mturk_client: The MTurk client to use for this request instead of the default client
+    :return: A generator containing the HITs
+    """
+    if mturk_client is None:
+        mturk_client = client
+    if granted_only and revoked_only:
+        raise ClientError("The parameters granted_only and revoked_only cannot both be True",
+                          "list_worker_with_qualification_type")
+    pages_to_get = True
+    next_token = None
+    params = {'QualificationTypeId': qualification_type_id}
+    if granted_only:
+        params['Status'] = 'Granted'
+    if revoked_only:
+        params['Status'] = 'Revoked'
+    while pages_to_get:
+        if next_token:
+            params['NextToken'] = next_token
+        response = mturk_client.list_workers_with_qualification_type(**params)
+        if response.get('NextToken'):
+            next_token = response['NextToken']
+        else:
+            pages_to_get = False
+        for qual in response.get('Qualifications', []):
+            yield qual
+
+
 def parse_answers(answer):
     """
     Parses the answer XML into a usable python dict for analysis. In cases where answers contain JSON strings
@@ -761,7 +798,7 @@ def display_task_preview(url=None, template=None, template_uri=None, context=Non
             return
         else:
             uri = s3.write(task, bucket, prefix + str(uuid.uuid4()) + '.html', acl=s3.ACL_PUBLIC_READ)
-            url = s3.get_public_url(uri)
+            url = s3.url(uri)
 
     if url is None or len(url) == 0:
         raise Exception('A url value or template must be provided')

@@ -1,7 +1,7 @@
 import larry.core
 from larry import utils
 from larry.types import Types
-from larry.s3 import decompose_uri
+from larry.s3 import split_uri
 import boto3
 import inspect
 import zipfile
@@ -12,6 +12,11 @@ import dis
 from collections import Mapping, UserDict
 import base64
 from botocore.exceptions import ClientError
+import tempfile
+import shutil
+import subprocess
+import sys
+import os
 
 client = None
 # A local instance of the boto3 session to use
@@ -102,7 +107,7 @@ def get_if_exists(name):
 
 
 def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=None, memory_size=None, publish=True,
-           description=None):
+           description=None, layers=None):
     """
     Creates a Lambda function from the provided deployment package.
     :param name: The name of the Lambda function.
@@ -116,6 +121,7 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
     increases its CPU allocation. The default value is 128 MB. The value must be a multiple of 64 MB.
     :param publish: Set to true to publish the first version of the function during creation.
     :param description: A description of the function.
+    :param layers: A list of function layer ARNs (including version) to add to the function's execution environment.
     :return: An object representing the configuration of the created Lambda
     """
     params = {
@@ -126,7 +132,7 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
         'Publish': publish
     }
     # If the package is an S3 URI use that, else treat it as a zipfile
-    (bucket, key) = decompose_uri(package)
+    (bucket, key) = split_uri(package)
     if bucket is None or key is None:
         params['Code'] = {'ZipFile': package}
     else:
@@ -138,19 +144,30 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
         params['Timeout'] = timeout
     if memory_size:
         params['MemorySize'] = memory_size
+    if layers:
+        params['Layers'] = layers
     return Lambda.from_create(client.create_function(**params))
 
 
-def generate_code_from_function(handler, imports=None):
+def generate_code_from_function(handler,
+                                imports=None,
+                                functions=None,
+                                decorators=None,
+                                incl_referenced_functions=False):
     """
     Retrieves the code for a local function and builds a string containing the code and imports. Note that this is
     an experimental feature and should be used with caution. This will pull in the code for the specified
     function from your current python environment, as well any local functions that it relies on. It will not
     pick up any globally defined variables so use care not to include those in your code.
+    NOTE: At this time it doesn't work with decorated functions
     :param handler: A local Python function
     :param imports: List of imports to include in the package code. Values can include import statements
     ('import boto3'), packages ('boto3'), import-as shorthand ('larry:lry'), or from-package-import-function
     shorthand ('urllib>parse').
+    :param functions: Additional local functions that should be included in the package
+    :param decorators: Decorators (as strings) to be inserted to be applied to the function
+    :param incl_referenced_functions: If enabled, this will attempt to include locally defined functions referenced
+    by the function
     :return: A str containing the code
     """
     code = ''
@@ -169,40 +186,93 @@ def generate_code_from_function(handler, imports=None):
         else:
             code += 'import ' + val + '\n'
 
-    code += '\n' + inspect.getsource(handler)
+    code += '\n'
 
-    frame = inspect.currentframe()
-    try:
-        namespace = globals()
-        current_frame = frame
-        for fn in _get_function_calls(handler, False):
-            while fn not in namespace:
-                current_frame = current_frame.f_back
-                if current_frame:
-                    namespace = current_frame.f_globals
-                else:
-                    raise Exception('Unable to locate the function "{}"'.format(fn))
-            code += '\n' + inspect.getsource(namespace[fn])
-    finally:
-        del frame
+    if not functions:
+        functions = []
+
+    if incl_referenced_functions:
+        frame = inspect.currentframe()
+        try:
+            namespace = globals()
+            current_frame = frame
+            for fn in _get_function_calls(handler, False):
+                while fn not in namespace:
+                    current_frame = current_frame.f_back
+                    if current_frame:
+                        namespace = current_frame.f_globals
+                    else:
+                        raise Exception('Unable to locate the function "{}"'.format(fn))
+                if namespace[fn] not in functions:
+                    functions.append(namespace[fn])
+        finally:
+            del frame
+
+    for function in functions:
+        code += '\n' + inspect.getsource(function)
+
+    code += '\n'
+
+    if decorators:
+        if isinstance(decorators, str):
+            code += decorators + '\n'
+        else:
+            code += '\n'.join(decorators) + '\n'
+
+    code += inspect.getsource(handler)
+
     return code
 
 
-def package_function(function, imports=None):
+def package_function(function,
+                     imports=None,
+                     functions=None,
+                     decorators=None,
+                     files=None,
+                     incl_referenced_functions=False,
+                     packages=None):
     """
     Retrieves the code for a Python function and packages it into a zipfile for upload to Lambda. Note that this is
     an experimental feature and should be used with caution. This will pull in the code for the specified
     function from your current python environment, as well any local functions that it relies on. It will not
     pick up any globally defined variables so use care not to include those in your code.
     :param function: A local Python function
-    :param imports: List of imports to include in the package code. Values can include import statements
-    ('import boto3'), packages ('boto3'), import-as shorthand ('larry:lry'), or from-package-import-function
-    shorthand ('urllib>parse').
-    :return: Zip package
+    :param imports: List of imports to include in the package code. Values can include import
+    statements ('import boto3'), packages ('boto3'), import-as shorthand ('larry:lry'), or
+    from-package-import-function shorthand ('urllib>parse').
+    :param functions: Additional local functions that should be included in the package
+    :param decorators: Decorators (as strings) to be inserted to be applied to the function
+    :param files: Local files to include in the package
+    :param incl_referenced_functions: If enabled, this will attempt to include locally defined functions referenced
+    by the function
+    :param packages: List of python packages to include in the distribution
+    :return: Zip package and the name of the handler
     """
     obj = BytesIO()
     zf = zipfile.ZipFile(obj, "a")
-    zf.writestr('handler.py', generate_code_from_function(function, imports=imports), zipfile.ZIP_DEFLATED)
+    zf.writestr('handler.py',
+                generate_code_from_function(function,
+                                            imports=imports,
+                                            functions=functions,
+                                            decorators=decorators,
+                                            incl_referenced_functions=incl_referenced_functions),
+                zipfile.ZIP_DEFLATED)
+    if files:
+        for file in files:
+            zf.write(file)
+    if packages:
+        temp_dir = tempfile.mkdtemp()
+        try:
+            for package in packages:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", "-t", temp_dir, package])
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    path = os.path.join(root, file)
+                    zf.write(path, os.path.relpath(path, temp_dir))
+        finally:
+            print(temp_dir)
+            shutil.rmtree(temp_dir)
+
     for zfile in zf.filelist:
         zfile.create_system = 0
         zfile.external_attr = 0
@@ -212,7 +282,7 @@ def package_function(function, imports=None):
 
 
 def create_or_update(name, package=None, handler=None, role=None, runtime=None, timeout=None, memory_size=None,
-                     publish=True, description=None):
+                     publish=True, description=None, layers=None):
     """
     Creates or updates a Lambda function with the provided deployment package or configuration.
     :param name: The name of the Lambda function.
@@ -226,6 +296,7 @@ def create_or_update(name, package=None, handler=None, role=None, runtime=None, 
     increases its CPU allocation. The default value is 128 MB. The value must be a multiple of 64 MB.
     :param publish: Set to true to publish the first version of the function during creation.
     :param description: A description of the function.
+    :param layers: A list of function layer ARNs (including version) to add to the function's execution environment.
     :return: An object representing the configuration of the Lambda
     """
     # TODO: Add create_role=True parameter that will generate a service role with the same name
@@ -234,14 +305,16 @@ def create_or_update(name, package=None, handler=None, role=None, runtime=None, 
     if existing:
         if package is not None:
             update_code(name, package, publish=publish)
-        if not (handler is None and role is None and runtime is None and timeout is None and memory_size is None):
-            update_config(name, handler=handler, role=role, runtime=runtime, timeout=timeout, memory_size=memory_size)
+        if not (handler is None and role is None and runtime is None and timeout is None and memory_size is None and
+                layers is None):
+            update_config(name, handler=handler, role=role, runtime=runtime, timeout=timeout, memory_size=memory_size,
+                          layers=layers)
         return existing
     else:
         if runtime is None:
             runtime = 'python3.8'
         return create(name, package, handler, role, runtime=runtime, timeout=timeout, memory_size=memory_size,
-                      publish=publish, description=description)
+                      publish=publish, description=description, layers=layers)
 
 
 def update_code(name, package, publish=True, dry_run=False):
@@ -261,7 +334,7 @@ def update_code(name, package, publish=True, dry_run=False):
     })
 
     # If the package is an S3 URI use that, else treat it as a zipfile
-    (bucket, key) = decompose_uri(package)
+    (bucket, key) = split_uri(package)
     if bucket is None or key is None:
         params['ZipFile'] = package
     else:
@@ -271,7 +344,7 @@ def update_code(name, package, publish=True, dry_run=False):
     return Lambda.from_create(client.update_function_code(**params))
 
 
-def update_config(name, handler=None, role=None, runtime='python3.8', timeout=None, memory_size=None):
+def update_config(name, handler=None, role=None, runtime='python3.8', timeout=None, memory_size=None, layers=None):
     """
     Modify the version-specific settings of a Lambda function.
     :param name: The name of the Lambda function.
@@ -282,6 +355,7 @@ def update_config(name, handler=None, role=None, runtime='python3.8', timeout=No
     The default is 3 seconds. The maximum allowed value is 900 seconds.
     :param memory_size:  The amount of memory that your function has access to. Increasing the function's memory also
     increases its CPU allocation. The default value is 128 MB. The value must be a multiple of 64 MB.
+    :param layers: A list of function layer ARNs (including version) to add to the function's execution environment.
     :return: An object representing the configuration of the Lambda
     """
     config_params = larry.core.map_parameters(locals(), {
@@ -290,7 +364,8 @@ def update_config(name, handler=None, role=None, runtime='python3.8', timeout=No
         'role': 'Role',
         'runtime': 'Runtime',
         'timeout': 'Timeout',
-        'memory_size': 'MemorySize'
+        'memory_size': 'MemorySize',
+        'layers': 'Layers'
     })
     return Lambda.from_create(client.update_function_configuration(**config_params))
 
@@ -310,8 +385,8 @@ def as_function(name, o_type=Types.DICT):
     :param o_type: A value defined in larry.types to specify how the Lambda response will be read
     :return: A function object
     """
-    def func(**kwargs):
-        return invoke_as(name, o_type, payload=kwargs, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False)
+    def func(event):
+        return invoke_as(name, o_type, payload=event, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False)
     return func
 
 
@@ -327,7 +402,7 @@ def invoke(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=Fa
     :return: The response payload, also the logs if requested
     """
     params = larry.core.map_parameters(locals(), {
-        'context': 'ClientContext ',
+        'context': 'ClientContext',
         'invoke_type': 'InvocationType',
         'name': 'FunctionName'
     })

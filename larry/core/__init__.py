@@ -49,6 +49,22 @@ def resolve_client(client_callback, key):
     return decorate
 
 
+def iterate_through_paginated_items(callback, items_key, next_key):
+    pages_to_get = True
+    next_token = None
+    while pages_to_get:
+        if next_token:
+            response = callback(next_token)
+        else:
+            response = callback()
+        if next_key in response:
+            next_token = response[next_key]
+        else:
+            pages_to_get = False
+        for item in response.get(items_key, []):
+            yield item
+
+
 class ResourceWrapper:
     def __init__(self, obj):
         self.__resource = obj
@@ -81,6 +97,6 @@ def copy_non_null_keys(param_list):
 def map_parameters(parameters, key_map):
     result = {}
     for k, i in key_map.items():
-        if parameters._get(k) is not None:
+        if k in parameters and parameters[k] is not None:
             result[i] = parameters[k]
     return result

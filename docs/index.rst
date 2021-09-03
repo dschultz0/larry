@@ -2,7 +2,7 @@ larry
 =================================
 
 **larry** is library of AWS utilities for Python that, quite simply, makes it easier to get data science and
-engineering projects done. It allows you to interact with AWS services with the least overhead possible so you
+engineering projects done. It allows you to interact with AWS services with as little overhead possible so you
 can stay focused on the task at hand, instead of mucking around with AWS APIs.
 
 Using **larry** you can accomplish the same tasks you would normally tackle with boto3 (it's built on boto3), but with a
@@ -43,7 +43,6 @@ focus on the task at hand.
     :maxdepth: 2
 
     installation
-    configuration
     exceptions
     reference/index.rst
 
