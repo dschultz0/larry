@@ -400,7 +400,10 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
             fp = tempfile.NamedTemporaryFile(delete=False)
             download(fp, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
             fp.close()
-            img = type_.imread(fp.name, **kwargs)
+            if type_.__name__ == 'cv2.cv2':
+                img = type_.imread(fp.name, **kwargs)
+            else:
+                img = type_(fp.name, **kwargs)
         finally:
             if fp:
                 os.remove(fp.name)
