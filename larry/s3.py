@@ -639,16 +639,16 @@ __content_type_to_pillow_format = {
 
 
 @_resolve_location(require_key=True)
-def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
+def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
              columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-             content_length=None, metadata=None, sse=None, storage_class=None,  tags=None,
+             content_length=None, metadata=None, sse=None, storage_class=None, tags=None,
              s3_resource=None, **kwargs):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
 
     :param value: Object to write to S3
-    :param o_type: The data type to write the value using
+    :param type_: The data type to write the value using
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
@@ -672,12 +672,16 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
     """
     suffix = os.path.splitext(key)[1]
     extension = suffix[1:] if suffix else None
-    if isinstance(o_type, ModuleType) and o_type.__name__ == 'cv2.cv2':
+    if (isinstance(type_, ModuleType) and type_.__name__ == 'cv2.cv2') or \
+            (callable(type_) or type_.__name__ == 'imwrite'):
         handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
         try:
             if content_type is None:
                 content_type = __extension_types.get(extension, __extension_types.get(suffix[1:].lower(), 'image/png'))
-            o_type.imwrite(filepath, value, **kwargs)
+            if type_.__name__ == 'cv2.cv2':
+                type_.imwrite(filepath, value, **kwargs)
+            else:
+                type_(filepath, value, **kwargs)
             with open(filepath, 'rb') as fp:
                 result = upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                                 content_encoding=content_encoding, content_language=content_language,
@@ -689,11 +693,11 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
                 os.remove(filepath)
         return result
     else:
-        if o_type == str:
+        if type_ == str:
             if content_type is None:
                 content_type = __extension_types.get(extension, 'text/plain')
             objct = value
-        elif o_type == dict:
+        elif type_ == dict:
             if content_type is None:
                 content_type = __extension_types.get(extension, 'text/plain') \
                     if isinstance(value, Iterable) else 'application/json'
@@ -704,14 +708,14 @@ def write_as(value, o_type, *location, bucket=None, key=None, uri=None, acl=None
                 objct = buff.getvalue()
             else:
                 objct = json.dumps(value, cls=utils.JSONEncoder)
-        elif isinstance(o_type, ModuleType) and o_type.__name__ == 'PIL.Image':
+        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
             objct = BytesIO()
             fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
             value.save(objct, fmt)
             objct.seek(0)
             if content_type is None:
                 content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
-        elif o_type == Types.DELIMITED:
+        elif type_ == Types.DELIMITED:
             if content_type is None:
                 content_type = __extension_types.get(extension, 'text/plain')
             buff = StringIO()
