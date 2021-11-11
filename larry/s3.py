@@ -1318,7 +1318,9 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
 
 
 @_resolve_location(require_key=True)
-def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl=None, **kwargs):
+def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, content_encoding=None,
+          content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
+          tags=None, s3_resource=None, acl=None, **kwargs):
     """
     Retrieves the data referenced by a URL to an S3 location.
 
@@ -1328,12 +1330,24 @@ def fetch(url, *location, bucket=None, key=None, uri=None, s3_resource=None, acl
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
     :param acl: An S3 policy to apply the S3 location
+    :param content_type: A standard MIME type describing the format of the object data
+    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
+    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
+    :param content_language: The language the content is in.
+    :param content_length: Size of the body in bytes.
+    :param metadata: A map of metadata to store with the object in S3.
+    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
+    :param storage_class: The S3 storage class to store the object in.
+    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
     req = request.Request(url, **kwargs)
     with request.urlopen(req) as response:
-        return __write(response.read(), bucket=bucket, key=key, s3_resource=s3_resource, acl=acl)
+        return __write(response.read(), bucket=bucket, key=key, s3_resource=s3_resource, acl=acl,
+                       content_type=content_type, content_encoding=content_encoding, content_language=content_language,
+                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                       tags=tags)
 
 
 @_resolve_location(require_key=True)
