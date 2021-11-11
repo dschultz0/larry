@@ -84,3 +84,7 @@ def show_progress(index, every, lst):
         print('All {} completed at {}'.format(index+1, datetime.now()))
     elif (index+1) % every == 0:
         print('Completed {} at {}'.format(index+1, datetime.now()))
+
+
+def list_chunker(seq, size):
+    return (seq[pos:pos + size] for pos in range(0, len(seq), size))

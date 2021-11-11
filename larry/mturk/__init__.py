@@ -613,6 +613,40 @@ def list_workers_with_qualification_type(qualification_type_id,
             yield qual
 
 
+def notify_workers(subject, message, worker_ids=None, qualification_id=None, mturk_client=None):
+    """
+    Sends an email to one or more Workers that you specify with the Worker ID(s) or qualification. The operation will
+    send emails to 100 Workers at a time. The operation will send a notification email to a Worker only if you have
+    previously approved or rejected work from the Worker.
+
+    :param subject: The subject line of the email message to send. Can include up to 200 characters.
+    :param message: The text of the email message to send. Can include up to 4,096 characters
+    :param worker_ids: A list or iterator of Worker IDs you wish to notify
+    :param qualification_id: Workers with this qualification id will be notified
+    :param mturk_client: The MTurk client to use for this request instead of the default client
+    :return: An array of failure responses or None if 100% successful
+    """
+    if mturk_client is None:
+        mturk_client = client
+    if qualification_id and worker_ids:
+        raise ClientError("The parameters worker_ids and qualification_id cannot both be specified",
+                          "notify_workers")
+    if not qualification_id and not worker_ids:
+        raise ClientError("The parameters worker_ids or qualification_id must be specified",
+                          "notify_workers")
+    if qualification_id:
+        worker_ids = [w['WorkerId'] for w in list_workers_with_qualification_type(qualification_id, granted_only=True)]
+    if isinstance(worker_ids, str):
+        worker_ids = [worker_ids]
+    worker_ids = list(worker_ids)
+    failures = []
+    for chunk in utils.list_chunker(worker_ids, 100):
+        response = mturk_client.notify_workers(Subject=subject, MessageText=message, WorkerIds=chunk)
+        if response:
+            failures.extend(response.get('NotifyWorkersFailureStatuses', []))
+    return failures if failures else None
+
+
 def parse_answers(answer):
     """
     Parses the answer XML into a usable python dict for analysis. In cases where answers contain JSON strings
