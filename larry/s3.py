@@ -361,7 +361,8 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None, s3_resourc
 
 
 @_resolve_location(require_key=True)
-def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None, **kwargs):
+def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None,
+            allow_single_quotes=False, **kwargs):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and loads the
     contents into an object of the specified type.
@@ -379,6 +380,7 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
     :param uri: An s3:// path containing the bucket and key of the object
     :param encoding: The charset to use when decoding the object bytes, utf-8 by default
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :param allow_single_quotes: Allow single quotes to be used in JSON data (only used for dict and json type)
     :return: An object representation of the data in S3
     """
     if isinstance(type_, type) and type_.__name__ == 'ndarray':
@@ -391,8 +393,8 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
         except ImportError as e:
             # Simply raise the ImportError to let the user know this requires Numpy to function
             raise e
-    elif isinstance(type_, ModuleType) and type_.__name__ == 'cv2.cv2':
-        img = None
+    elif (isinstance(type_, ModuleType) and type_.__name__ == 'cv2.cv2') or \
+            (callable(type_) and type_.__name__ == 'imread'):
         fp = None
         try:
             fp = tempfile.NamedTemporaryFile(delete=False)
@@ -405,8 +407,14 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
         return img
     else:
         objct = read(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
-        if type_ == dict:
-            return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
+        if type_ == dict or type_ == json:
+            try:
+                return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
+            except json.JSONDecodeError as e:
+                if allow_single_quotes:
+                    return json.loads(objct.decode(encoding).replace("'", '"'), object_hook=utils.JSONDecoder)
+                else:
+                    raise e
         elif type_ == str:
             return objct.decode(encoding)
         elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
