@@ -6,6 +6,7 @@ from larry import s3
 from larry import mturk
 from larry import sqs
 from larry import sts
+from larry import sfn
 from larry import sagemaker
 from larry import lmbda
 from larry import iam
@@ -19,6 +20,7 @@ def _propagate_session():
     s3.set_session(boto_session=__session)
     mturk.set_session(boto_session=__session)
     sqs.set_session(boto_session=__session)
+    sfn.set_session(boto_session=__session)
     sts.set_session(boto_session=__session)
     sagemaker.set_session(boto_session=__session)
     lmbda.set_session(boto_session=__session)
