@@ -13,7 +13,7 @@ from larry import iam
 from larry import textract
 from larry import dynamo
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 
 def _propagate_session():
