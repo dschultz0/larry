@@ -104,7 +104,8 @@ class labeling:
             display_iframe(html=html, width=width, height=height)
 
     @staticmethod
-    def render_ui_template(template, role, template_input=None, pre_lambda=None, lambda_input=None):
+    @resolve_client(_get_client, 'client')
+    def render_ui_template(template, role, template_input=None, pre_lambda=None, lambda_input=None, client=None):
         """
         Renders the UI template to HTML so that you can preview the worker's experience. Either a template_input or
         the pre_lambda and lambda_input can be provided to pass to the template.
@@ -115,6 +116,7 @@ class labeling:
         lambda)
         :param pre_lambda: The ARN of a Lambda function that is run before a data object is sent to a human worker.
         :param lambda_input: A data record that you plan to submit to Ground Truth
+        :param client: Sagemaker client to use in place of the default value
         :return: A tuple containing the rendered HTML and any errors.
         """
 
@@ -244,6 +246,7 @@ class labeling:
         return config
 
     @staticmethod
+    @resolve_client(_get_client, 'client')
     def create_job(name,
                    manifest_uri,
                    output_uri,
@@ -255,8 +258,7 @@ class labeling:
                    free_of_adult_content=True,
                    algorithms_config=None,
                    stopping_conditions=None,
-                   sagemaker_client=None):
-        sagemaker_client = sagemaker_client if sagemaker_client else client
+                   client=None):
         if label_attribute_name is None:
             label_attribute_name = name
         params = {
@@ -273,17 +275,17 @@ class labeling:
             params['LabelingJobAlgorithmsConfig'] = algorithms_config
         if stopping_conditions:
             params['StoppingConditions'] = stopping_conditions
-        return sagemaker_client.create_labeling_job(**params)['LabelingJobArn']
+        return client.create_labeling_job(**params)['LabelingJobArn']
 
     @staticmethod
-    def describe_job(name, sagemaker_client=None):
-        sagemaker_client = sagemaker_client if sagemaker_client else client
-        return sagemaker_client.describe_labeling_job(LabelingJobName=name)
+    @resolve_client(_get_client, 'client')
+    def describe_job(name, client=None):
+        return client.describe_labeling_job(LabelingJobName=name)
 
     @staticmethod
-    def get_job_state(name, sagemaker_client=None):
-        sagemaker_client = sagemaker_client if sagemaker_client else client
-        response = labeling.describe_job(name, sagemaker_client)
+    @resolve_client(_get_client, 'client')
+    def get_job_state(name, client=None):
+        response = labeling.describe_job(name, client)
         status = response['LabelingJobStatus']
         labeled = response['LabelCounters']['TotalLabeled']
         unlabeled = response['LabelCounters']['Unlabeled']
@@ -309,9 +311,9 @@ class labeling:
         return by_item, by_worker
 
     @staticmethod
-    def stop_job(name, sagemaker_client=None):
-        sagemaker_client = sagemaker_client if sagemaker_client else client
-        sagemaker_client.stop_labeling_job(LabelingJobName=name)
+    @resolve_client(_get_client, 'client')
+    def stop_job(name, client=None):
+        client.stop_labeling_job(LabelingJobName=name)
 
     @staticmethod
     def get_results(output_uri, job_name):
