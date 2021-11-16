@@ -643,15 +643,15 @@ class Lambda(UserDict):
 
     @property
     def dead_letter_arn(self):
-        return self['DeadLetterConfig']._get('TargetArn')
+        return self['DeadLetterConfig'].get('TargetArn')
 
     @property
     def environment_variables(self):
-        return self['Environment']._get('Variables', {})
+        return self['Environment'].get('Variables', {})
 
     @property
     def environment_error(self):
-        return self['Environment']._get('Error', {})
+        return self['Environment'].get('Error', {})
 
     @property
     def master_arn(self):
@@ -691,11 +691,11 @@ class Lambda(UserDict):
 
     @property
     def code_repository_type(self):
-        return self['Code']._get('RepositoryType')
+        return self['Code'].get('RepositoryType')
 
     @property
     def code_location(self):
-        return self['Code']._get('Location')
+        return self['Code'].get('Location')
 
     @property
     def tags(self):
@@ -703,4 +703,4 @@ class Lambda(UserDict):
 
     @property
     def reserved_concurrent_executions(self):
-        return self['Concurrency']._get('ReservedConcurrentExecutions')
+        return self['Concurrency'].get('ReservedConcurrentExecutions')

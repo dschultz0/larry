@@ -7,7 +7,7 @@ def _extract_response_detail(assignments, identifier, exclude_rejected=True):
     for assignment in assignments:
         responses.append({
             'WorkerId': assignment['WorkerId'],
-            'Response': assignment['Answer']._get(identifier),
+            'Response': assignment['Answer'].get(identifier),
             'AssignmentId': assignment['AssignmentId'],
             'HITId': assignment['HITId'],
             'AcceptTime': assignment['AcceptTime'],

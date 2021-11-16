@@ -315,7 +315,7 @@ def delete(*location, bucket=None, key=None, uri=None, s3_resource=None):
 
 
 @_resolve_location(require_key=True)
-def _get(*location, bucket=None, key=None, uri=None, s3_resource=None):
+def _get_obj(*location, bucket=None, key=None, uri=None, s3_resource=None):
     """
     Performs a 'get' of the object defined by the bucket/key pair or uri.
 
@@ -357,7 +357,7 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None, s3_resourc
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The bytes contained in the object
     """
-    return _get(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)['Body'].read(byte_count)
+    return _get_obj(bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)['Body'].read(byte_count)
 
 
 @_resolve_location(require_key=True)
@@ -741,7 +741,7 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
                 for row in value:
                     line = ''
                     for i, k in enumerate(keys):
-                        value = '' if row._get(k) is None else str(row._get(k))
+                        value = '' if row.get(k) is None else str(row.get(k))
                         line = value if i == 0 else line + delimiter + value
                     buff.write(line + newline)
 
@@ -1147,7 +1147,7 @@ def __value_mapping_to_delimited_bytes(value, columns=None, newline='\n', delimi
     for i, k in enumerate(keys):
         if i > 0:
             buff.write(delimiter)
-        buff.write(str(value._get(k, '')))
+        buff.write(str(value.get(k, '')))
     return __value_bytes_as(buff.getvalue(), str, encoding=encoding, suffix=newline)
 
 

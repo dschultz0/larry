@@ -42,7 +42,7 @@ import boto3
 import json
 
 resource = boto3.resource('s3')
-obj = resource.Bucket('mybucket').Object(key='myfile.json')._get()
+obj = resource.Bucket('mybucket').Object(key='myfile.json').get()
 contents = obj['Body'].read()
 my_dict = json.loads(contents.decode('utf-8'))
 ```
