@@ -673,7 +673,7 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
     suffix = os.path.splitext(key)[1]
     extension = suffix[1:] if suffix else None
     if (isinstance(type_, ModuleType) and type_.__name__ == 'cv2.cv2') or \
-            (callable(type_) or type_.__name__ == 'imwrite'):
+            (callable(type_) and type_.__name__ == 'imwrite'):
         handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
         try:
             if content_type is None:
