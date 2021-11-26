@@ -704,10 +704,10 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
             if not isinstance(value, Mapping) and isinstance(value, Iterable):
                 buff = StringIO()
                 for row in value:
-                    buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
+                    buff.write(json.dumps(row, cls=utils.JSONEncoder, **kwargs) + newline)
                 objct = buff.getvalue()
             else:
-                objct = json.dumps(value, cls=utils.JSONEncoder)
+                objct = json.dumps(value, cls=utils.JSONEncoder, **kwargs)
         elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
             objct = BytesIO()
             fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
