@@ -295,20 +295,18 @@ def join_images(images, horizontal=True):
             for image in images:
                 (x, y) = image.size
                 height = max(height, y)
-                indices.append(width)
+                indices.append([width, 0, width + x, y])
                 width += x
-            indices = [(x, 0) for x in indices]
         else:
             for image in images:
                 (x, y) = image.size
                 width = max(width, x)
-                indices.append(height)
+                indices.append([0, height, x, height + y])
                 height += y
-            indices = [(0, y) for y in indices]
 
         canvas = Image.new('RGB', (width, height), color='white')
         for idx, image in enumerate(images):
-            canvas.paste(image, indices[idx])
+            canvas.paste(image, indices[idx][:2])
 
         return canvas, indices
     except ImportError as e:

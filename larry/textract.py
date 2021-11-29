@@ -76,9 +76,29 @@ def detect_lines(file=None, image=None, bucket=None, key=None, uri=None, size=No
     return [_block_to_box(element, width, height) for element in blocks if element['BlockType'] == 'LINE']
 
 
-def _block_to_box(block, width, height):
-    return Box.from_position(block['Geometry']['BoundingBox'], as_ratio=True, height=height, width=width,
-                             text=block['Text'], confidence=block['Confidence'])
+def _block_to_box(block, width, height, page_indices=None):
+    if page_indices and len(page_indices) > 1:
+        page = block['Page']
+        indices = page_indices[page-1]
+        # Extend from 2 value to 4 value if necessary
+        if len(indices) == 2:
+            if page == len(page_indices):
+                indices.extend([width, height])
+            else:
+                next_indices = page_indices[page]
+                indices.extend([
+                    width if indices[0] == next_indices[0] else next_indices[0],
+                    height if indices[1] == next_indices[1] else next_indices[1]
+                ])
+        return Box.from_position(block['Geometry']['BoundingBox'],
+                                 as_ratio=True,
+                                 height=indices[3] - indices[1],
+                                 width=indices[2] - indices[0],
+                                 text=block['Text'],
+                                 confidence=block['Confidence']).offset(indices[0], indices[1])
+    else:
+        return Box.from_position(block['Geometry']['BoundingBox'], as_ratio=True, height=height, width=width,
+                                 text=block['Text'], confidence=block['Confidence'])
 
 
 @resolve_client(__get_client, 'client')
@@ -100,7 +120,8 @@ def get_detected_text_detail(job_id, client=None):
     warnings = response.get('Warnings')
     message = response.get('StatusMessage')
     if status in ['SUCCEEDED', 'PARTIAL_SUCCESS', 'FAILED']:
-        return True, _block_iterator(job_id, response, client), pages, warnings, message
+        result = None if status == 'FAILED' else _block_iterator(job_id, response, client)
+        return True, result, pages, warnings, message
     else:
         return False, None, None, None, None
 
@@ -123,28 +144,29 @@ def _block_iterator(job_id, first_response, client):
             blocks_to_retrieve = False
 
 
-def get_detected_lines_detail(job_id, size=None, width=None, height=None, client=None):
+def get_detected_lines_detail(job_id, size=None, width=None, height=None, page_indices=None, client=None):
     complete, blocks, pages, warnings, message = get_detected_text_detail(job_id, client=client)
     if not complete:
         return complete, blocks, pages, warnings, message
     else:
         (width, height) = size if size else (width, height)
-        return complete, _line_iterator(blocks, width, height), pages, warnings, message
+        return complete, _line_iterator(blocks, width, height, page_indices), pages, warnings, message
 
 
-def get_detected_lines(job_id, size=None, width=None, height=None, client=None):
+def get_detected_lines(job_id, size=None, width=None, height=None, page_indices=None, client=None):
     complete, blocks, pages, warnings, message = get_detected_lines_detail(job_id,
                                                                            size,
                                                                            width,
                                                                            height,
+                                                                           page_indices,
                                                                            client=client)
     return blocks
 
 
-def _line_iterator(blocks, width=None, height=None):
+def _line_iterator(blocks, width=None, height=None, page_indices=None):
     for block in blocks:
         if block['BlockType'] == 'LINE':
             if width and height:
-                yield _block_to_box(block, width, height).data
+                yield _block_to_box(block, width, height, page_indices).data
             else:
                 yield block
