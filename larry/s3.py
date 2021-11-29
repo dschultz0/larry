@@ -345,6 +345,21 @@ def size(*location, bucket=None, key=None, uri=None, s3_resource=None):
 
 
 @_resolve_location(require_key=True)
+def content_type(*location, bucket=None, key=None, uri=None, s3_resource=None):
+    """
+    Returns the content type assigned to the object
+
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
+    :return: A standard MIME type describing the format of the object data.
+    """
+    return Object(bucket=bucket, key=key, s3_resource=s3_resource).content_type
+
+
+@_resolve_location(require_key=True)
 def read(*location, bucket=None, key=None, uri=None, byte_count=None, s3_resource=None):
     """
     Retrieves the contents of an S3 object
