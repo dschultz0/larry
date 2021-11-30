@@ -42,15 +42,12 @@ def JSONDecoder(dct):
     return dct
 
 
-def json_loads(value):
-    return json.loads(value, object_hook=JSONDecoder)
+def json_loads(value, **kwargs):
+    return json.loads(value, object_hook=JSONDecoder, **kwargs)
 
 
-def json_dumps(value, separators=None):
-    if separators:
-        return json.dumps(value, cls=JSONEncoder, separators=separators)
-    else:
-        return json.dumps(value, cls=JSONEncoder)
+def json_dumps(value, **kwargs):
+    return json.dumps(value, cls=JSONEncoder, **kwargs)
 
 
 def make_lambda_result_json_safe(value, encoder=JSONEncoder):
