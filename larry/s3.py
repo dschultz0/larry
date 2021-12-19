@@ -377,7 +377,7 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None, s3_resourc
 
 @_resolve_location(require_key=True)
 def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None,
-            allow_single_quotes=False, **kwargs):
+            allow_single_quotes=False, use_decoder=False, **kwargs):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and loads the
     contents into an object of the specified type.
@@ -394,6 +394,8 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
     :param encoding: The charset to use when decoding the object bytes, utf-8 by default
+    :param use_decoder: Indicate that JSON objects should be read in with the using the larry decoder and converted
+    to objects.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :param allow_single_quotes: Allow single quotes to be used in JSON data (only used for dict and json type)
     :return: An object representation of the data in S3
@@ -430,6 +432,7 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
                 return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
             except json.JSONDecodeError as e:
                 if allow_single_quotes:
+                    # TODO: Use a more stable replace operation that will handle nested quotes
                     return json.loads(objct.decode(encoding).replace("'", '"'), object_hook=utils.JSONDecoder)
                 else:
                     raise e
@@ -503,7 +506,7 @@ def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='u
 
 
 @_resolve_location(require_key=True)
-def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', s3_resource=None):
+def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', use_decoder=False, s3_resource=None):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and
     loads the json contents into a dict.
@@ -513,10 +516,13 @@ def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', s3_r
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
     :param encoding: The charset to use when decoding the object bytes, utf-8 by default
+    :param use_decoder: Indicate that JSON objects should be read in with the using the larry decoder and converted
+    to objects.
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: A dict representation of the json contained in the object
     """
-    return read_as(dict, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
+    return read_as(dict, bucket=bucket, key=key, uri=uri, encoding=encoding, use_decoder=use_decoder,
+                   s3_resource=s3_resource)
 
 
 @_resolve_location(require_key=True)
