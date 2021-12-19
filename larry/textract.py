@@ -150,7 +150,8 @@ def get_detected_lines_detail(job_id, size=None, width=None, height=None, page_i
         return complete, blocks, pages, warnings, message
     else:
         (width, height) = size if size else (width, height)
-        return complete, _line_iterator(blocks, width, height, page_indices), pages, warnings, message
+        result = None if blocks is None else _line_iterator(blocks, width, height, page_indices)
+        return complete, result, pages, warnings, message
 
 
 def get_detected_lines(job_id, size=None, width=None, height=None, page_indices=None, client=None):
