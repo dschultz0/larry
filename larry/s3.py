@@ -410,14 +410,14 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
         except ImportError as e:
             # Simply raise the ImportError to let the user know this requires Numpy to function
             raise e
-    elif (isinstance(type_, ModuleType) and type_.__name__ == 'cv2.cv2') or \
+    elif (isinstance(type_, ModuleType) and type_.__name__ in ['cv2', 'cv2.cv2']) or \
             (callable(type_) and type_.__name__ == 'imread'):
         fp = None
         try:
             fp = tempfile.NamedTemporaryFile(delete=False)
             download(fp, bucket=bucket, key=key, uri=uri, s3_resource=s3_resource)
             fp.close()
-            if type_.__name__ == 'cv2.cv2':
+            if type_.__name__ in ['cv2', 'cv2.cv2']:
                 img = type_.imread(fp.name, **kwargs)
             else:
                 img = type_(fp.name, **kwargs)
