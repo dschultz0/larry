@@ -1,11 +1,30 @@
 import setuptools
-import larry as lry
+import os
+from pkg_resources import parse_version
+
+pre_version = parse_version(os.listdir("pre")[0].split("-")[1])
+rel_version = parse_version(os.listdir("rel")[0].split("-")[1])
+pre_mode = True
+
+if pre_mode:
+    if pre_version > rel_version:
+        p = pre_version.pre
+        version = pre_version.base_version + p[0] + str(p[1]+1)
+    else:
+        version = rel_version.base_version + "a0"
+else:
+    version = f"{rel_version.major}.{rel_version.minor}.{rel_version.micro+1}"
+
+with open("larry/__init__.py") as fp:
+    text = fp.read()
+with open("larry/__init__.py", "w") as fp:
+    fp.write(text.replace("{VERSION}", version))
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
 setuptools.setup(
     name="larry",
-    version=lry.__version__,
+    version=version,
     author="Dave Schultz",
     author_email="djschult@gmail.com",
     description="Library of helper reference for common data tasks using AWS resources such as S3, MTurk and others",
