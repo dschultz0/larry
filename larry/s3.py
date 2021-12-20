@@ -693,13 +693,13 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
     """
     suffix = os.path.splitext(key)[1]
     extension = suffix[1:] if suffix else None
-    if (isinstance(type_, ModuleType) and type_.__name__ == 'cv2.cv2') or \
+    if (isinstance(type_, ModuleType) and type_.__name__ in ['cv2', 'cv2.cv2']) or \
             (callable(type_) and type_.__name__ == 'imwrite'):
         handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
         try:
             if content_type is None:
                 content_type = __extension_types.get(extension, __extension_types.get(suffix[1:].lower(), 'image/png'))
-            if type_.__name__ == 'cv2.cv2':
+            if type_.__name__ in ['cv2', 'cv2.cv2']:
                 type_.imwrite(filepath, value, **kwargs)
             else:
                 type_(filepath, value, **kwargs)
