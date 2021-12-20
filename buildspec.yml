@@ -5,16 +5,16 @@ phases:
       python: 3.9
   pre_build:
     commands:
-      -pip install --upgrade pip
-      -pip install twine
-      -mkdir pre
-      -cd pre
-      -pip download larry --no-deps --pre
-      -cd ..
-      -mkdir rel
-      -cd rel
-      -pip download larry --no-deps
-      -cd ..
+      - pip install --upgrade pip
+      - pip install twine
+      - mkdir pre
+      - cd pre
+      - pip download larry --no-deps --pre
+      - cd ..
+      - mkdir rel
+      - cd rel
+      - pip download larry --no-deps
+      - cd ..
   build:
     commands:
       - python setup.py bdist_wheel
