@@ -718,7 +718,7 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
             if content_type is None:
                 content_type = __extension_types.get(extension, 'text/plain')
             objct = value
-        elif type_ == dict:
+        elif type_ == dict or type_ == json:
             if content_type is None:
                 content_type = __extension_types.get(extension, 'application/json')
             objct = json.dumps(value, cls=utils.JSONEncoder, **kwargs)
