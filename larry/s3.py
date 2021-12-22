@@ -6,15 +6,15 @@ import re
 import uuid
 import json
 import inspect
+import csv
 from io import StringIO, BytesIO
 import tempfile
-from collections.abc import Mapping, Iterable
+from collections.abc import Mapping
 from types import ModuleType
 
 import larry.core
 from larry import utils
 from larry import sts
-from larry.types import Types
 from larry import ClientError
 from larry.core import ResourceWrapper
 from larry.core import attach_exception_handler
@@ -720,23 +720,17 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
             objct = value
         elif type_ == dict:
             if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain') \
-                    if isinstance(value, Iterable) else 'application/json'
-            if not isinstance(value, Mapping) and isinstance(value, Iterable):
-                buff = StringIO()
-                for row in value:
-                    buff.write(json.dumps(row, cls=utils.JSONEncoder, **kwargs) + newline)
-                objct = buff.getvalue()
-            else:
-                objct = json.dumps(value, cls=utils.JSONEncoder, **kwargs)
-        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
-            objct = BytesIO()
-            fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
-            value.save(objct, fmt)
-            objct.seek(0)
+                content_type = __extension_types.get(extension, 'application/json')
+            objct = json.dumps(value, cls=utils.JSONEncoder, **kwargs)
+        elif isinstance(type_, list) and len(type_) > 0 and type_[0] == dict:
             if content_type is None:
-                content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
-        elif type_ == Types.DELIMITED:
+                content_type = __extension_types.get(extension, 'text/plain')
+            buff = StringIO()
+            for row in value:
+                buff.write(json.dumps(row, cls=utils.JSONEncoder, **kwargs) + newline)
+            objct = buff.getvalue()
+        elif type_ == csv:
+            # TODO: Flush this out to fully use csv library
             if content_type is None:
                 content_type = __extension_types.get(extension, 'text/plain')
             buff = StringIO()
@@ -772,6 +766,13 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
             else:
                 raise TypeError('Invalid input')
             objct = buff.getvalue()
+        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
+            objct = BytesIO()
+            fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
+            value.save(objct, fmt)
+            objct.seek(0)
+            if content_type is None:
+                content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
         else:
             raise TypeError('Unhandled type')
         return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
@@ -967,7 +968,7 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
-    return write_as(rows, Types.DELIMITED, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+    return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                     delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
                     content_encoding=content_encoding, content_language=content_language, content_length=content_length,
                     metadata=metadata, sse=sse, storage_class=storage_class, tags=tags,
@@ -1114,7 +1115,7 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
             content = __value_bytes_as(value, o_type, encoding=encoding, suffix=newline if incl_newline else None)[0]
 
     # write out delimited values
-    elif o_type == Types.DELIMITED:
+    elif o_type == csv:
         # if it's a dict or string just write them out
         if isinstance(value, Mapping):
             content = __value_mapping_to_delimited_bytes(value, columns=columns, newline=newline,
