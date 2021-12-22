@@ -4,10 +4,12 @@ from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
 from larry.types import Box
 import re
+from urllib import request
 
 
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S%z'
 TIME_FORMAT = '%H:%M:%S'
+__user_agent = None
 
 
 class JSONEncoder(json.JSONEncoder):
@@ -85,3 +87,15 @@ def show_progress(index, every, lst):
 
 def list_chunker(seq, size):
     return (seq[pos:pos + size] for pos in range(0, len(seq), size))
+
+
+def user_agent():
+    global __user_agent
+    if __user_agent is None:
+        try:
+            # Attempt to get a recent user agent if possible
+            with request.urlopen("https://jnrbsn.github.io/user-agents/user-agents.json") as response:
+                __user_agent = json.loads(response.read())[0]
+        except:
+            __user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36"
+    return __user_agent

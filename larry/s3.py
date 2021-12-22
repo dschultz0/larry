@@ -1342,7 +1342,7 @@ def find_keys_not_present(bucket, keys=None, uris=None, s3_resource=None):
 @_resolve_location(require_key=True)
 def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, content_encoding=None,
           content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
-          tags=None, s3_resource=None, acl=None, **kwargs):
+          tags=None, s3_resource=None, acl=None, incl_user_agent=False, **kwargs):
     """
     Retrieves the data referenced by a URL to an S3 location.
 
@@ -1361,9 +1361,15 @@ def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, co
     :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
     :param storage_class: The S3 storage class to store the object in.
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
+    :param incl_user_agent: If true, a user agent string will be added as a header to the request
     :param s3_resource: Boto3 resource to use if you don't wish to use the default resource
     :return: The URI of the object written to S3
     """
+    if incl_user_agent:
+        if "headers" in kwargs:
+            kwargs["headers"]["User-Agent"] = utils.user_agent()
+        else:
+            kwargs["headers"] = {"User-Agent": utils.user_agent()}
     req = request.Request(url, **kwargs)
     with request.urlopen(req) as response:
         return __write(response.read(), bucket=bucket, key=key, s3_resource=s3_resource, acl=acl,
