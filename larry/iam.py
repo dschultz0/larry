@@ -1,5 +1,4 @@
 import larry.core
-from larry import utils
 import boto3
 import json
 from collections import Mapping
@@ -7,10 +6,10 @@ from botocore.exceptions import ClientError
 from larry import sts
 
 
-# Local IAM resource object
-__resource = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
+# Local IAM resource object
+__resource = __session.resource('iam')
 
 
 def __getattr__(name):
@@ -46,7 +45,7 @@ def set_session(aws_access_key_id=None,
 
 def __assume_role_service_policy(service):
     """
-    Generates a policy document to use as the assume role policy for a service role.
+    Generates a policy document to use as the AssumeRole policy for a service role.
     :param service: The service that will be able to use the role
     :return: A policy document
     """

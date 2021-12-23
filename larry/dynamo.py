@@ -1,18 +1,14 @@
 import larry.core
-from larry import utils
 import boto3
-from larry.core import resolve_client, ResourceWrapper, iterate_through_paginated_items
+from larry.core import ResourceWrapper, iterate_through_paginated_items
 import csv
 import itertools
-import json
 from collections import Mapping
-from botocore.exceptions import ClientError
-from larry import sts
 
-# Local DynamoDB resource object
-__resource = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
+# Local DynamoDB resource object
+__resource = __session.resource('dynamodb')
 
 
 def _get_resource(): return __resource
@@ -52,12 +48,10 @@ class Table(ResourceWrapper):
         bucket = lry.dynamodb.Table('table_name')
 
     :param table_name: The Table's name identifier
-    :param dynamodb_resource: Boto3 resource to use if you don't wish to use the default resource
     """
 
-    @resolve_client(_get_resource, 'dynamodb_resource')
-    def __init__(self, table_name, dynamodb_resource=None):
-        super().__init__(dynamodb_resource.Table(table_name))
+    def __init__(self, table_name):
+        super().__init__(_get_resource().Table(table_name))
 
 
 def _scan(table_name,
@@ -69,9 +63,8 @@ def _scan(table_name,
           projection_expression=None,
           expression_attribute_names=None,
           expression_attribute_values=None,
-          consistent_read=None,
-          dynamodb_resource=None):
-    table = Table(table_name, dynamodb_resource)
+          consistent_read=None):
+    table = Table(table_name)
     params = larry.core.map_parameters(locals(), {
         'index_name': 'IndexName',
         'start_key': 'ExclusiveStartKey',
@@ -94,8 +87,7 @@ def scan_iter(table_name,
               projection_expression=None,
               expression_attribute_names=None,
               expression_attribute_values=None,
-              consistent_read=None,
-              dynamodb_resource=None):
+              consistent_read=None):
     params = locals()
 
     def _scan_page(last_evaluated_key=None):
@@ -110,15 +102,14 @@ def export_to_csv(table_name,
                   newline='\n',
                   fieldnames=None,
                   evaluate_fields_for=100,
-                  dynamodb_resource=None,
                   **attrs):
     iterator = scan_iter(table_name)
     preselect = None
     if fieldnames is None:
         preselect = list(itertools.islice(iterator, evaluate_fields_for))
         fieldnames = set()
-        for record in preselect:
-            fieldnames.update(record.keys())
+        for rec in preselect:
+            fieldnames.update(rec.keys())
         fieldnames = list(fieldnames)
         print(fieldnames)
 

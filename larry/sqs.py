@@ -3,9 +3,9 @@ from larry import utils
 import boto3
 
 
-client = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
+client = __session.client('sqs')
 
 
 def set_session(aws_access_key_id=None,
@@ -29,15 +29,13 @@ def set_session(aws_access_key_id=None,
     client = __session.client('sqs')
 
 
-def send_message(message, destination, sqs_client=None):
+def send_message(message, destination):
     """
     Sends a message to the specified queue.
     :param message: The message to send.
     :param destination: The URL of the queue to send the message to
-    :param sqs_client: Boto3 client to use if you don't wish to use the default client
     :return: The message id assigned to the message
     """
-    sqs_client = sqs_client if sqs_client else client
     if type(message) == dict:
         message = utils.json_dumps(message)
-    return sqs_client.send_message(QueueUrl=destination, MessageBody=message)['MessageId']
+    return client.send_message(QueueUrl=destination, MessageBody=message)['MessageId']

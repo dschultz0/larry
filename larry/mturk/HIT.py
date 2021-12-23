@@ -52,9 +52,8 @@ class HIT(collections.UserDict):
         self['Assignments'] = list(mturk.list_assignments_for_hit(self.hit_id))
         return self['Assignments']
 
-    def retrieve_annotation(self, s3_resource=None):
-        self['Annotation'] = mturk.parse_requester_annotation(self.get('RequesterAnnotation'),
-                                                              s3_resource=s3_resource)
+    def retrieve_annotation(self):
+        self['Annotation'] = mturk.parse_requester_annotation(self.get('RequesterAnnotation'))
 
     def add_assignments(self, additional_assignments):
         mturk.add_assignments(self.hit_id, additional_assignments)

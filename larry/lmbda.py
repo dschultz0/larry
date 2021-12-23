@@ -18,9 +18,9 @@ import subprocess
 import sys
 import os
 
-client = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
+client = __session.client('lambda')
 
 INVOKE_TYPE_REQUEST_RESPONSE = 'RequestResponse'
 INVOKE_TYPE_DRY_RUN = 'DryRun'

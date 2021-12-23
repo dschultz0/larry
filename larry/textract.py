@@ -1,12 +1,12 @@
-from larry.core import copy_non_null_keys, resolve_client
+from larry.core import copy_non_null_keys
 from larry.s3 import split_uri
 from larry.types import Box
 import boto3
 import io
 
-__client = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
+__client = __session.client('textract')
 
 
 def set_session(aws_access_key_id=None,
@@ -42,8 +42,7 @@ def __get_client():
     return __client
 
 
-@resolve_client(__get_client, 'client')
-def detect_text(file=None, image=None, bucket=None, key=None, uri=None, client=None):
+def detect_text(file=None, image=None, bucket=None, key=None, uri=None):
     document = {}
     params = {'Document': document}
     if file:
@@ -65,14 +64,13 @@ def detect_text(file=None, image=None, bucket=None, key=None, uri=None, client=N
     (bucket, key) = split_uri(uri) if uri else (bucket, key)
     if bucket and key:
         document['S3Object'] = {'Bucket': bucket, 'Name': key}
-    response = client.detect_document_text(**params)
+    response = __client.detect_document_text(**params)
     return response
 
 
-def detect_lines(file=None, image=None, bucket=None, key=None, uri=None, size=None, width=None, height=None,
-                 client=None):
+def detect_lines(file=None, image=None, bucket=None, key=None, uri=None, size=None, width=None, height=None):
     (width, height) = size if size else (width, height)
-    blocks = detect_text(file=file, image=image, bucket=bucket, key=key, uri=uri, client=client)['Blocks']
+    blocks = detect_text(file=file, image=image, bucket=bucket, key=key, uri=uri)['Blocks']
     return [_block_to_box(element, width, height) for element in blocks if element['BlockType'] == 'LINE']
 
 
@@ -101,10 +99,9 @@ def _block_to_box(block, width, height, page_indices=None):
                                  text=block['Text'], confidence=block['Confidence'])
 
 
-@resolve_client(__get_client, 'client')
-def start_text_detection(bucket=None, key=None, uri=None, client=None):
+def start_text_detection(bucket=None, key=None, uri=None):
     (bucket, key) = split_uri(uri) if uri else (bucket, key)
-    return client.start_document_text_detection(DocumentLocation={
+    return __client.start_document_text_detection(DocumentLocation={
         'S3Object': {
             'Bucket': bucket,
             'Name': key
@@ -112,40 +109,38 @@ def start_text_detection(bucket=None, key=None, uri=None, client=None):
     }).get('JobId')
 
 
-@resolve_client(__get_client, 'client')
-def get_detected_text_detail(job_id, client=None):
-    response = client.get_document_text_detection(JobId=job_id)
+def get_detected_text_detail(job_id):
+    response = __client.get_document_text_detection(JobId=job_id)
     pages = response.get('DocumentMetadata', {}).get('Pages')
     status = response['JobStatus']
     warnings = response.get('Warnings')
     message = response.get('StatusMessage')
     if status in ['SUCCEEDED', 'PARTIAL_SUCCESS', 'FAILED']:
-        result = None if status == 'FAILED' else _block_iterator(job_id, response, client)
+        result = None if status == 'FAILED' else _block_iterator(job_id, response)
         return True, result, pages, warnings, message
     else:
         return False, None, None, None, None
 
 
-@resolve_client(__get_client, 'client')
-def get_detected_text(job_id, client=None):
-    complete, blocks, pages, warnings, message = get_detected_text_detail(job_id, client=client)
+def get_detected_text(job_id):
+    complete, blocks, pages, warnings, message = get_detected_text_detail(job_id)
     return blocks
 
 
-def _block_iterator(job_id, first_response, client):
+def _block_iterator(job_id, first_response):
     response = first_response
     blocks_to_retrieve = 'Blocks' in first_response
     while blocks_to_retrieve:
         for block in response['Blocks']:
             yield block
         if 'NextToken' in response:
-            response = client.get_document_text_detection(JobId=job_id, NextToken=response['NextToken'])
+            response = __client.get_document_text_detection(JobId=job_id, NextToken=response['NextToken'])
         else:
             blocks_to_retrieve = False
 
 
-def get_detected_lines_detail(job_id, size=None, width=None, height=None, page_indices=None, client=None):
-    complete, blocks, pages, warnings, message = get_detected_text_detail(job_id, client=client)
+def get_detected_lines_detail(job_id, size=None, width=None, height=None, page_indices=None):
+    complete, blocks, pages, warnings, message = get_detected_text_detail(job_id)
     if not complete:
         return complete, blocks, pages, warnings, message
     else:
@@ -154,13 +149,12 @@ def get_detected_lines_detail(job_id, size=None, width=None, height=None, page_i
         return complete, result, pages, warnings, message
 
 
-def get_detected_lines(job_id, size=None, width=None, height=None, page_indices=None, client=None):
+def get_detected_lines(job_id, size=None, width=None, height=None, page_indices=None):
     complete, blocks, pages, warnings, message = get_detected_lines_detail(job_id,
                                                                            size,
                                                                            width,
                                                                            height,
-                                                                           page_indices,
-                                                                           client=client)
+                                                                           page_indices)
     return blocks
 
 

@@ -3,9 +3,7 @@ import boto3
 import posixpath
 import base64
 
-import larry.core
-from larry.core import copy_non_null_keys, resolve_client
-from larry import utils
+from larry.core import copy_non_null_keys
 from larry import s3
 from larry import lmbda
 from larry.core.ipython import display_iframe
@@ -14,9 +12,9 @@ from botocore.exceptions import ClientError
 from larry.utils.image import scale_image_to_size
 from collections import Mapping
 
-__client = None
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
+__client = __session.client('sagemaker')
 
 
 def set_session(aws_access_key_id=None,
@@ -36,7 +34,7 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, __client
-    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(**copy_non_null_keys(locals()))
     __client = __session.client('sagemaker')
 
 
@@ -59,8 +57,7 @@ def _resolve_region(region):
 class notebook:
 
     @staticmethod
-    @resolve_client(_get_client, 'client')
-    def update_lifecycle_config(name, on_start=None, on_create=None, client=None):
+    def update_lifecycle_config(name, on_start=None, on_create=None):
         if on_create is None and on_start is None:
             raise TypeError('A value for OnCreate or OnStart must be provided')
         params = {
@@ -70,7 +67,7 @@ class notebook:
             params['OnCreate'] = {'Content': base64.b64encode(on_create.encode('ascii')).decode('ascii')}
         if on_start:
             params['OnStart'] = {'Content': base64.b64encode(on_start.encode('ascii')).decode('ascii')}
-        client.update_notebook_instance_lifecycle_config(**params)
+        _get_client().update_notebook_instance_lifecycle_config(**params)
 
 
 class labeling:
@@ -104,8 +101,7 @@ class labeling:
             display_iframe(html=html, width=width, height=height)
 
     @staticmethod
-    @resolve_client(_get_client, 'client')
-    def render_ui_template(template, role, template_input=None, pre_lambda=None, lambda_input=None, client=None):
+    def render_ui_template(template, role, template_input=None, pre_lambda=None, lambda_input=None):
         """
         Renders the UI template to HTML so that you can preview the worker's experience. Either a template_input or
         the pre_lambda and lambda_input can be provided to pass to the template.
@@ -142,7 +138,7 @@ class labeling:
         if isinstance(template_input, Mapping):
             template_input = json.dumps(template_input)
 
-        result = client.render_ui_template(UiTemplate={'Content': template},
+        result = _get_client().render_ui_template(UiTemplate={'Content': template},
                                            Task={'Input': template_input},
                                            RoleArn=role)
         return result['RenderedContent'], result.get('Errors')
@@ -246,7 +242,6 @@ class labeling:
         return config
 
     @staticmethod
-    @resolve_client(_get_client, 'client')
     def create_job(name,
                    manifest_uri,
                    output_uri,
@@ -257,8 +252,7 @@ class labeling:
                    free_of_pii=False,
                    free_of_adult_content=True,
                    algorithms_config=None,
-                   stopping_conditions=None,
-                   client=None):
+                   stopping_conditions=None):
         if label_attribute_name is None:
             label_attribute_name = name
         params = {
@@ -275,17 +269,15 @@ class labeling:
             params['LabelingJobAlgorithmsConfig'] = algorithms_config
         if stopping_conditions:
             params['StoppingConditions'] = stopping_conditions
-        return client.create_labeling_job(**params)['LabelingJobArn']
+        return _get_client().create_labeling_job(**params)['LabelingJobArn']
 
     @staticmethod
-    @resolve_client(_get_client, 'client')
-    def describe_job(name, client=None):
-        return client.describe_labeling_job(LabelingJobName=name)
+    def describe_job(name):
+        return _get_client().describe_labeling_job(LabelingJobName=name)
 
     @staticmethod
-    @resolve_client(_get_client, 'client')
-    def get_job_state(name, client=None):
-        response = labeling.describe_job(name, client)
+    def get_job_state(name):
+        response = labeling.describe_job(name)
         status = response['LabelingJobStatus']
         labeled = response['LabelCounters']['TotalLabeled']
         unlabeled = response['LabelCounters']['Unlabeled']
@@ -311,9 +303,8 @@ class labeling:
         return by_item, by_worker
 
     @staticmethod
-    @resolve_client(_get_client, 'client')
-    def stop_job(name, client=None):
-        client.stop_labeling_job(LabelingJobName=name)
+    def stop_job(name):
+        _get_client().stop_labeling_job(LabelingJobName=name)
 
     @staticmethod
     def get_results(output_uri, job_name):
