@@ -104,11 +104,33 @@ class Box:
         print(json.dumps(box, cls=JSONEncoder)
     """
 
-    def __init__(self, coordinates, attributes=None):
-        if isinstance(coordinates, Box):
-            coordinates = coordinates.coordinates
-        self._coordinates = tuple(coordinates)
-        self._attributes = attributes
+    def __init__(self, value, attributes=None):
+        if isinstance(value, Box):
+            self._coordinates = tuple(value.coordinates)
+            self._attributes = value.attributes.copy() if value.attributes else None
+        elif isinstance(value, list) or isinstance(value, tuple):
+            self._coordinates = tuple(value)
+            self._attributes = attributes
+        elif isinstance(value, Mapping):
+            value = value.copy()
+            self._coordinates = self.__case_insensitive_pop(value, "coordinates", raise_if_missing=False)
+            if self._coordinates:
+                self.__case_insensitive_pop(value, "top", raise_if_missing=False)
+                self.__case_insensitive_pop(value, "left", raise_if_missing=False)
+                self.__case_insensitive_pop(value, "width", raise_if_missing=False)
+                self.__case_insensitive_pop(value, "height", raise_if_missing=False)
+            else:
+                self._coordinates = self.position_to_coordinates(
+                    self.__case_insensitive_pop(value, "left"),
+                    self.__case_insensitive_pop(value, "top"),
+                    self.__case_insensitive_pop(value, "width"),
+                    self.__case_insensitive_pop(value, "height")
+                )
+            if attributes:
+                value.update(attributes)
+            self._attributes = value
+        if len(self._coordinates) != 4:
+            raise ValueError("Box coordinates must have exactly four values")
 
     @property
     def coordinates(self):
@@ -146,6 +168,16 @@ class Box:
             return self._attributes[item]
         raise AttributeError(f"AttributeError: 'Box' object has no attribute '{item}'")
 
+    def __getitem__(self, item):
+        if self._attributes and item in self._attributes:
+            return self._attributes[item]
+        raise KeyError(f"KeyError: '{item}'")
+
+    def __setitem__(self, key, value):
+        if self._attributes is None:
+            self._attributes = {}
+        self._attributes[key] = value
+
     @classmethod
     def from_dict(cls, obj):
         """
@@ -156,15 +188,7 @@ class Box:
         :param obj: The source dict to build the Box from
         :return: A Box object
         """
-        coordinates = cls.__case_insensitive_pop(obj, "coordinates", raise_if_missing=False)
-        if coordinates:
-            cls.__case_insensitive_pop(obj, "top", raise_if_missing=False)
-            cls.__case_insensitive_pop(obj, "left", raise_if_missing=False)
-            cls.__case_insensitive_pop(obj, "width", raise_if_missing=False)
-            cls.__case_insensitive_pop(obj, "height", raise_if_missing=False)
-            return cls.from_coordinates(coordinates, **obj)
-        else:
-            return cls.from_position(obj)
+        return cls(obj)
 
     @staticmethod
     def __case_insensitive_pop(d, key, default=None, raise_if_missing=True):
@@ -188,14 +212,7 @@ class Box:
         :param kwargs: Additional keyword attributes that should be included in the Box attributes
         :return: A Box object
         """
-        p = position.copy()
-        coordinates = cls.position_to_coordinates(cls.__case_insensitive_pop(p, "left"),
-                                                  cls.__case_insensitive_pop(p, "top"),
-                                                  cls.__case_insensitive_pop(p, "width"),
-                                                  cls.__case_insensitive_pop(p, "height"))
-        if kwargs:
-            p.update(kwargs)
-        return cls(coordinates, p)
+        return cls(position, kwargs)
 
     @classmethod
     def from_position_ratio(cls, position, size=None, width=None, height=None, scale=1, **kwargs):

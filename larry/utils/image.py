@@ -1,8 +1,8 @@
 import math
 from io import BytesIO
 import collections
-from larry import types
 from larry import s3
+from larry.types import Box
 
 
 def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=None, max_bytes=None):
@@ -41,70 +41,42 @@ def _image_byte_count(image):
 
 
 def annotation_to_coordinates(box):
-    return [box['left'], box['top'], box['left']+box['width']-1, box['top']+box['height']-1]
+    return Box(box).coordinates
 
 
 def box_coordinates(box):
-    coords = box.get('coordinates')
-    if coords:
-        return coords
-    else:
-        return annotation_to_coordinates(box)
+    return Box(box).coordinates
 
 
 def scale_box(box, scalar):
-    bbox = augment_box_attributes(box.copy())
-    bbox['left'] = box['left'] * scalar
-    bbox['top'] = box['top'] * scalar
-    bbox['width'] = box['width'] * scalar
-    bbox['height'] = box['height'] * scalar
-    bbox['coordinates'] = annotation_to_coordinates(bbox)
-    return bbox
+    return (Box(box) * scalar).data
 
 
 def augment_box_attributes(box):
-    if 'coordinates' not in box and 'top' in box and 'left' in box and 'width' in box and 'height' in box:
-        box['coordinates'] = annotation_to_coordinates(box)
-    elif 'coordinates' in box and ('top' not in box or 'left' not in box):
-        box['left'] = box['coordinates'][0]
-        box['top'] = box['coordinates'][1]
-        box['width'] = box['coordinates'][2] - box['coordinates'][0] + 1
-        box['height'] = box['coordinates'][3] - box['coordinates'][1] + 1
-    return box
+    return Box(box).data
 
 
 def box_area(box):
-    if isinstance(box, collections.Mapping):
-        box = box_coordinates(box)
-    if box:
-        return (box[2] - box[0]) * (box[3] - box[1])
-    else:
-        return 0
+    return abs(Box(box))
 
 
 def box_intersection(a, b):
-    if isinstance(a, collections.Mapping):
-        a = box_coordinates(a)
-    if isinstance(b, collections.Mapping):
-        b = box_coordinates(b)
-    intersection = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
-    if intersection[2] < intersection[0] or intersection[3] < intersection[1]:
-        return None
-    else:
-        return intersection
+    intersection = Box(a) & Box(b)
+    return intersection.data if intersection else None
 
 
 def intersection_over_union(a, b):
-    ac = box_coordinates(a)
-    bc = box_coordinates(b)
-    intersection = box_area(box_intersection(ac, bc))
-    union = box_area(ac) + box_area(bc) - intersection
-    return intersection / union
+    a = Box(a)
+    b = Box(b)
+    intersection = a & b
+    if intersection:
+        return abs(intersection) / (abs(a) + abs(b) - abs(intersection))
+    else:
+        return None
 
 
 def render_boxes(boxes,
-                 image=None,
-                 image_uri=None,
+                 image,
                  color=None,
                  width=None,
                  label_size=None,
@@ -115,8 +87,8 @@ def render_boxes(boxes,
     try:
         from PIL import ImageDraw, ImageFont, Image
 
-        if image_uri:
-            image = s3.read_as(Image, uri=image_uri)
+        if isinstance(image, str):
+            image = s3.read_as(Image, uri=image)
         # Change palette mode images to RGB so that standard palette colors can be drawn on them
         if image.mode == 'P':
             image = image.convert(mode='RGB')
