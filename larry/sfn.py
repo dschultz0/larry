@@ -1,4 +1,6 @@
 import json
+from collections import UserDict
+
 import larry.core
 import boto3
 from collections.abc import Mapping
@@ -56,6 +58,7 @@ def execution_history(execution_arn, reverse=False, include_execution_data=True)
         "includeExecutionData": include_execution_data
     }
     results_to_retrieve = True
+    previous_events = {}
     while results_to_retrieve:
         response = client.get_execution_history(**params)
         if response.get('nextToken'):
@@ -63,7 +66,31 @@ def execution_history(execution_arn, reverse=False, include_execution_data=True)
         else:
             results_to_retrieve = False
         for event in response['events']:
-            yield event
+            event_obj = Event(event, previous_events)
+            previous_events[event_obj.id] = event_obj
+            yield event_obj
+
+
+def trace_execution_failure(execution_arn):
+    for step in execution_history(execution_arn):
+        if "Failed" in step.event_type:
+            traced_input = __find_input(step)
+            print(f"Task failed in step {step.id} of execution {execution_arn}")
+            print(step)
+            if step.input is None and traced_input:
+                print("Input:")
+                for k, v in traced_input.items():
+                    print(f" - {k}: {v}")
+            if step.cause and "ExecutionArn" in step.cause:
+                trace_execution_failure(step.cause["ExecutionArn"])
+            break
+
+
+def __find_input(step):
+    while step:
+        if step.input:
+            return step.input
+        step = step.previous_event
 
 
 def executions(state_machine_arn, status_filter=None):
@@ -131,3 +158,191 @@ def send_task_failure(task_token, error=None, cause=None):
         'cause': 'cause'
     })
     client.send_task_failure(**params)
+
+
+class StateMachine:
+    def __init__(self, arn):
+        self._arn = arn
+
+    def _name_to_arn(self, name):
+        if name.startswith("arn"):
+            return name
+        else:
+            return self._arn.replace("stateMachine", "execution") + ":" + name
+
+    def start_execution(self, input_=None, name=None, trace_header=None):
+        execution_arn = start_execution(self._arn, input_, name, trace_header)
+        return execution_arn.split(":")[-1]
+
+    def has_finished(self, name):
+        arn = self._name_to_arn(name)
+        status = describe_execution(arn)["status"]
+        return status != "RUNNING"
+
+    def has_succeeded(self, name):
+        arn = self._name_to_arn(name)
+        status = describe_execution(arn)["status"]
+        return status == "SUCCEEDED"
+
+    def trace_execution_failure(self, name):
+        arn = self._name_to_arn(name)
+        trace_execution_failure(arn)
+
+
+class Event:
+    def __init__(self, event, previous_events=None):
+        self._event = event
+        t = event["type"]
+        self._details = event.get(t[0].lower() + t[1:] + "EventDetails", {})
+        if previous_events and event.get("previousEventId") in previous_events:
+            self._previous_event = previous_events[event["previousEventId"]]
+        else:
+            self._previous_event = None
+
+    @property
+    def event_type(self):
+        return self._event["type"]
+
+    @property
+    def id(self):
+        return self._event["id"]
+
+    @property
+    def previous_event_id(self):
+        return self._event["previousEventId"]
+
+    @property
+    def previous_event(self):
+        return self._previous_event
+
+    @property
+    def timestamp(self):
+        return self._event["timestamp"]
+
+    @property
+    def details(self):
+        return self._details
+
+    @property
+    def error(self):
+        return self._details.get("error")
+
+    @property
+    def cause(self):
+        c = self._details.get("cause")
+        if isinstance(c, str) and "{" in c:
+            try:
+                start = c.find("{")
+                end = c.rfind("}") + 1
+                pre = c[:start]
+                post = c[end:]
+                obj = {}
+                if pre:
+                    obj["preMessage"] = pre
+                obj.update(json.loads(c[start:end]))
+                if post:
+                    obj["postMessage"] = post
+                return obj
+            except:
+                pass
+        return c
+
+    @property
+    def input(self):
+        if "input" in self._details:
+            try:
+                return json.loads(self._details.get("input"))
+            except:
+                return self._details.get("input")
+        elif self.cause and "Input" in self.cause:
+            try:
+                return json.loads(self.cause.get("Input"))
+            except:
+                return self.cause.get("Input")
+        return None
+
+    @property
+    def output(self):
+        try:
+            return json.loads(self._details.get("output"))
+        except:
+            return self._details.get("output")
+
+    @property
+    def resource(self):
+        return self._details.get("resource")
+
+    @property
+    def resource_type(self):
+        return self._details.get("resourceType")
+
+    @property
+    def timeout(self):
+        return self._details.get("timeoutInSeconds")
+
+    @property
+    def heartbeat(self):
+        return self._details.get("heartbeatInSeconds")
+
+    @property
+    def input_truncated(self):
+        return self._details.get("inputDetails", {}).get("truncated", False)
+
+    @property
+    def output_truncated(self):
+        return self._details.get("outputDetails", {}).get("truncated", False)
+
+    @property
+    def region(self):
+        return self._details.get("region")
+
+    @property
+    def parameters(self):
+        return self._details.get("parameters")
+
+    @property
+    def name(self):
+        return self._details.get("name")
+
+    @property
+    def index(self):
+        return self._details.get("index")
+
+    @property
+    def length(self):
+        return self._details.get("length")
+
+    def __repr__(self):
+        lines = []
+        lines = [f"<Event {self.id}: {self.event_type} at {self.timestamp.strftime('%Y/%m/%d %H:%M:%S')} ({self.previous_event_id})"]
+        buried_input = None
+        for key, value in self._details.items():
+            if key in ["cause", "input", "output"]:
+                value = getattr(self, key)
+                if isinstance(value, dict):
+                    lines.append(f"   - {key}:")
+                    for k, v in value.items():
+                        if key == "cause" and k == "Input":
+                            buried_input = self.input
+                        elif key == "cause" and k == "stackTrace":
+                            lines.append("      * stackTrace:")
+                            for stack_trace_entry in v:
+                                lines.extend(["        " + e for e in stack_trace_entry.strip("\n").split("\n")])
+                        else:
+                            lines.append(f"      * {k}: {v}")
+                else:
+                    lines.append(f"   - {key}: {value}")
+            elif key in ["inputDetails", "outputDetails"]:
+                if value.get("truncated"):
+                    lines.append(f"   - {key.replace('Details', '')} truncated: True")
+            else:
+                lines.append(f"   - {key}: {value}")
+        if buried_input:
+            if isinstance(buried_input, dict):
+                lines.append(f"   - input:")
+                for k, v in buried_input.items():
+                    lines.append(f"      * {k}: {v}")
+            else:
+                lines.append(f"   - input: {buried_input}")
+        lines.append(">")
+        return "\n".join(lines)
