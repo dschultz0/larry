@@ -1,15 +1,4 @@
 from collections import UserDict, Mapping
-from enum import Enum
-
-
-# Types used in IO operations to designate how data should be written/read
-class Types(Enum):
-    DICT = 1
-    STRING = 2
-    PILLOW_IMAGE = 3
-    DELIMITED = 4
-    JSON_LINES = 5
-    NP_ARRAY = 6
 
 
 class ClientError(Exception):

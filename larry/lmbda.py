@@ -1,6 +1,5 @@
 import larry.core
 from larry import utils
-from larry.types import Types
 from larry.s3 import split_uri
 import boto3
 import inspect
@@ -378,7 +377,7 @@ def delete(name):
     client.delete_function(FunctionName=name)
 
 
-def as_function(name, o_type=Types.DICT):
+def as_function(name, o_type=dict):
     """
     Creates a python function that will invoke the Lambda and return the results in the specified format.
     :param name: The name or ARN of the function
@@ -438,9 +437,9 @@ def invoke_as(name, o_type, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPON
         payload, log = result
     else:
         payload = result
-    if o_type == Types.STRING:
+    if o_type == str:
         result = payload.read().decode('utf-8')
-    elif o_type == Types.DICT:
+    elif o_type == dict:
         result = json.loads(payload.read(), object_hook=utils.JSONDecoder)
     else:
         raise Exception('Unhandled type')
@@ -461,7 +460,7 @@ def invoke_as_str(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, 
     function in the context object.
     :return: The response as a string, also the logs if requested
     """
-    return invoke_as(name, Types.STRING, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
+    return invoke_as(name, str, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
 
 
 def invoke_as_dict(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
@@ -475,7 +474,7 @@ def invoke_as_dict(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE,
     function in the context object.
     :return: The response as a dict, also the logs if requested
     """
-    return invoke_as(name, Types.DICT, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
+    return invoke_as(name, dict, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
 
 
 def _get_function_calls(func, built_ins=False):
@@ -536,7 +535,7 @@ class Lambda(UserDict):
     def from_create(cls, response):
         return cls(response)
 
-    def as_function(self, o_type=Types.DICT):
+    def as_function(self, o_type=dict):
         """
         Creates a python function that will invoke the Lambda and return the results in the specified format.
         :param o_type: A value defined in larry.types to specify how the Lambda response will be read

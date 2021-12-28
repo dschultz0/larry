@@ -13,7 +13,7 @@ def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=
             src_bytes = _image_byte_count(image)
         else:
             src_bytes = s3.size(bucket, key, uri)
-            image = s3.read_as(types.TYPE_PILLOW_IMAGE, bucket, key, uri)
+            image = s3.read_as(Image, bucket, key, uri)
         x, y = image.size
         src_pixels = x * y
         bytes_scalar = math.sqrt(max_bytes/src_bytes) if max_bytes else 1
@@ -215,7 +215,12 @@ def render_boxes_from_objects(objects,
                               color=None):
     # TODO: Avoid an unnecessary copy step when coming from uri
     if image_uri:
-        image = s3.read_as(types.TYPE_PILLOW_IMAGE, uri=image_uri)
+        try:
+            from PIL import Image
+            image = s3.read_as(Image, uri=image_uri)
+        except ImportError as e:
+            # Simply raise the ImportError to let the user know this requires Pillow to function
+            raise e
     # Change palette mode images to RGB so that standard palette colors can be drawn on them
     if image.mode == 'P':
         image = image.convert(mode='RGB')
