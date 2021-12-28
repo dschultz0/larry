@@ -88,15 +88,17 @@ def _block_to_box(block, width, height, page_indices=None):
                     width if indices[0] == next_indices[0] else next_indices[0],
                     height if indices[1] == next_indices[1] else next_indices[1]
                 ])
-        return Box.from_position(block['Geometry']['BoundingBox'],
-                                 as_ratio=True,
-                                 height=indices[3] - indices[1],
-                                 width=indices[2] - indices[0],
-                                 text=block['Text'],
-                                 confidence=block['Confidence']).offset(indices[0], indices[1])
+        return Box.from_position_ratio(block['Geometry']['BoundingBox'],
+                                       height=indices[3] - indices[1],
+                                       width=indices[2] - indices[0],
+                                       text=block['Text'],
+                                       confidence=block['Confidence']).offset(indices[0], indices[1])
     else:
-        return Box.from_position(block['Geometry']['BoundingBox'], as_ratio=True, height=height, width=width,
-                                 text=block['Text'], confidence=block['Confidence'])
+        return Box.from_position_ratio(block['Geometry']['BoundingBox'],
+                                       height=height,
+                                       width=width,
+                                       text=block['Text'],
+                                       confidence=block['Confidence'])
 
 
 def start_text_detection(bucket=None, key=None, uri=None):

@@ -28,7 +28,7 @@ class JSONEncoder(json.JSONEncoder):
             assignment['__Assignment__'] = True
             return assignment
         elif isinstance(obj, Box):
-            box = {i: obj[i] for i in obj}
+            box = obj.data
             box['__Box__'] = True
             return box
         return json.JSONEncoder.default(self, obj)
@@ -40,7 +40,7 @@ def JSONDecoder(dct):
     if '__Assignment__' in dct:
         return Assignment(dct)
     if '__Box__' in dct:
-        return Box(dct)
+        return Box.from_dict(dct)
     return dct
 
 
@@ -76,13 +76,6 @@ def create_s3_key(path, extension):
     """Given a path and a file type, strips out all non A-Z0-9 characters and
     appends the file type to the end: making paths and urls s3 friendly"""
     return re.sub(r'\W+', '', path) + '.' + extension
-
-
-def show_progress(index, every, lst):
-    if index == len(lst)-1:
-        print('All {} completed at {}'.format(index+1, datetime.now()))
-    elif (index+1) % every == 0:
-        print('Completed {} at {}'.format(index+1, datetime.now()))
 
 
 def list_chunker(seq, size):

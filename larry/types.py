@@ -1,4 +1,4 @@
-from collections import UserDict, Mapping
+from collections import Mapping
 
 
 class ClientError(Exception):
@@ -63,20 +63,18 @@ class ClientError(Exception):
         return self.__error.response['Error']['Message']
 
 
-class Box(UserDict):
+class Box:
     """
     A representation of a box that can handle the distinct coordinate systems used by the different AWS
     services, as well as various libraries. This provides a mechanism for moving between different systems and
     enables basic operations on the boxes.
-
-    Because Box extends a UserDict object it will also retain any additional attributes that are provided or assigned.
 
     A Box can be created from two distinct coordinate systems:
 
     * **coordinates**: `[x1, y1, x2, y2]`
     * a dict containing the **position** defined by top, left, width, height
 
-    Box itself represents it's coordinates in pixels that are measured from the top-left. To support a range of options
+    Box itself represents its coordinates in pixels that are measured from the top-left. To support a range of options
     the class methods can also source data that has a bottom-left origin or is defined as a ratio of the image size.
 
     .. code-block:: python
@@ -84,6 +82,7 @@ class Box(UserDict):
         from larry.types import Box
         from larry.utils import JSONEncoder
         import json
+
 
         tlwh = { 'top': 10, 'left': 10, 'width': 30, 'height': 30 }
         coords = [10, 10, 40, 40]
@@ -96,8 +95,8 @@ class Box(UserDict):
 
         box = Box.from_position(tlwh)
         box = Box.from_coords(coords)
-        box = Box.from_position(coords_ratio, as_ratio=True, width=100, height=100)
-        box = Box.from_position(coords_ratio, as_ratio=True, top_origin=False, size=(100,100))
+        box = Box.from_position_ratio(coords_ratio, width=100, height=100)
+        box = Box.from_position_ratio(coords_ratio, top_origin=False, size=(100,100))
         box = Box.from_dict(obj)
 
         # writes out the JSON for the obj value above, supplemented with top, left, width,
@@ -105,14 +104,50 @@ class Box(UserDict):
         print(json.dumps(box, cls=JSONEncoder)
     """
 
-    def __init__(self, *data):
-        UserDict.__init__(self)
-        for dat in data:
-            self.update(dat)
+    def __init__(self, coordinates, attributes=None):
+        if isinstance(coordinates, Box):
+            coordinates = coordinates.coordinates
+        self._coordinates = tuple(coordinates)
+        self._attributes = attributes
+
+    @property
+    def coordinates(self):
+        return self._coordinates
+
+    @property
+    def left(self):
+        return self._coordinates[0]
+
+    @property
+    def top(self):
+        return self._coordinates[1]
+
+    @property
+    def width(self):
+        return self._coordinates[2] - self._coordinates[0]
+
+    @property
+    def height(self):
+        return self._coordinates[3] - self._coordinates[1]
+
+    @property
+    def attributes(self):
+        return self._attributes
+
+    @property
+    def area(self):
+        """
+        Returns the area of the Box in square pixels
+        """
+        return abs(self)
+
+    def __getattr__(self, item):
+        if self._attributes and item in self._attributes:
+            return self._attributes[item]
+        raise AttributeError(f"AttributeError: 'Box' object has no attribute '{item}'")
 
     @classmethod
     def from_dict(cls, obj):
-        # TODO: Rework this to call the other class methods depending on what system it contains
         """
         Creates a Box object containing contents of the dict that is passed. It's expected that
         the dict passed contains either position information as top/left/width/height elements or
@@ -121,194 +156,214 @@ class Box(UserDict):
         :param obj: The source dict to build the Box from
         :return: A Box object
         """
-        result = cls(obj)
-        if 'top' in obj and 'left' in obj and 'width' in obj and 'height' in obj:
-            result._calc_coordinates()
-        elif 'coordinates' in obj:
-            if len(obj['coordinates']) == 4:
-                result._calc_position()
-            else:
-                raise TypeError('Coordinates must have exactly four values')
+        coordinates = cls.__case_insensitive_pop(obj, "coordinates", raise_if_missing=False)
+        if coordinates:
+            cls.__case_insensitive_pop(obj, "top", raise_if_missing=False)
+            cls.__case_insensitive_pop(obj, "left", raise_if_missing=False)
+            cls.__case_insensitive_pop(obj, "width", raise_if_missing=False)
+            cls.__case_insensitive_pop(obj, "height", raise_if_missing=False)
+            return cls.from_coordinates(coordinates, **obj)
         else:
-            raise TypeError('The source dict must have either a position (top/left/height/width) or coordinates')
-        return result
+            return cls.from_position(obj)
+
+    @staticmethod
+    def __case_insensitive_pop(d, key, default=None, raise_if_missing=True):
+        if key in d:
+            return d.pop(key)
+        else:
+            for k in d.keys():
+                if k.lower() == key.lower():
+                    return d.pop(k)
+        if raise_if_missing:
+            raise KeyError(f'Value for {key} is missing')
+        else:
+            return default
 
     @classmethod
-    def from_position(cls, position, as_ratio=False, size=None, width=None, height=None, **kwargs):
+    def from_position(cls, position, **kwargs):
         """
         Creates a Box object containing contents of the dict that is passed as a position.
 
         :param position: The source dict to build the Box from
-        :param as_ratio: Indicates that the values are represented as a share of the image dimensions
+        :param kwargs: Additional keyword attributes that should be included in the Box attributes
+        :return: A Box object
+        """
+        p = position.copy()
+        coordinates = cls.position_to_coordinates(cls.__case_insensitive_pop(p, "left"),
+                                                  cls.__case_insensitive_pop(p, "top"),
+                                                  cls.__case_insensitive_pop(p, "width"),
+                                                  cls.__case_insensitive_pop(p, "height"))
+        if kwargs:
+            p.update(kwargs)
+        return cls(coordinates, p)
+
+    @classmethod
+    def from_position_ratio(cls, position, size=None, width=None, height=None, scale=1, **kwargs):
+        """
+        Creates a Box object containing contents of the dict that is passed as a position that is defined as
+        a share of the image size.
+
+        :param position: The source dict to build the Box from
         :param size: The size of the image as a tuple (width, height)
         :param width: The width of the image in pixels
         :param height: The height of the image in pixels
-        :param kwargs: Additional keyword attributes that should be included in the Box dict
+        :param scale: The number of digits to the right of the decimal point to include in the calculated coordinates
+        :param kwargs: Additional keyword attributes that should be included in the Box attributes
         :return: A Box object
         """
-        obj = cls(position, kwargs)
-        if 'top' not in obj or 'left' not in obj or 'width' not in obj or 'height' not in obj:
-            if 'Top' in obj and 'Left' in obj and 'Width' in obj and 'Height' in obj:
-                obj['top'] = obj.pop('Top')
-                obj['left'] = obj.pop('Left')
-                obj['width'] = obj.pop('Width')
-                obj['height'] = obj.pop('Height')
-            else:
-                raise TypeError('The source dict must contain a valid position containing top, left, width, and height values')
-        if as_ratio:
-            (width, height) = size if size else (width, height)
-            if width is None or height is None:
-                raise TypeError('Image dimensions must be provided if the position is defined as a ratio')
-            obj['top'] = height * obj['top']
-            obj['left'] = width * obj['left']
-            obj['height'] = height * obj['height']
-            obj['width'] = width * obj['width']
-        obj._calc_coordinates()
-        return obj
+        (width, height) = size if size else (width, height)
+        if width is None or height is None:
+            raise ValueError('Image dimensions must be provided')
+        p = position.copy()
+        coordinates = cls.position_to_coordinates(round(cls.__case_insensitive_pop(p, "left") * width, scale),
+                                                  round(cls.__case_insensitive_pop(p, "top") * height, scale),
+                                                  round(cls.__case_insensitive_pop(p, "width") * width, scale),
+                                                  round(cls.__case_insensitive_pop(p, "height") * height, scale))
+        if kwargs:
+            p.update(kwargs)
+        return cls(coordinates, p)
+
+    @staticmethod
+    def __normalize_bottom_origin(coordinates, height):
+        if height is None:
+            raise TypeError("Image height must be provided when the origin is bottom-left")
+        return [coordinates[0], height - coordinates[3], coordinates[2], height - coordinates[1]]
 
     @classmethod
-    def from_coords(cls, coordinates, top_origin=True, as_ratio=False, size=None, width=None, height=None, **kwargs):
+    def from_coordinates(cls, coordinates, top_origin=True, height=None, **kwargs):
         """
         Creates a Box object using coordinates of the box in pixels.
 
         :param coordinates: The coordinates of the box (x1, y1, x2, y2)
         :param top_origin: Indicates the origin from which the coordinates are calculated, False if bottom origin
-        :param as_ratio: Indicates that the values are represented as a share of the image dimensions
+        :param height: The height of the image in pixels (required for bottom origin coordinates)
+        :param kwargs: Additional keyword attributes that should be included in the Box attributes
+        :return: A Box object
+        """
+        if len(coordinates) != 4:
+            raise TypeError('Coordinates must have exactly four values')
+        if not top_origin:
+            coordinates = cls.__normalize_bottom_origin(coordinates, height)
+        return cls(coordinates, kwargs)
+
+    @classmethod
+    def from_coordinates_ratio(cls, coordinates, top_origin=True, size=None, width=None, height=None, **kwargs):
+        """
+        Creates a Box object using coordinates of the box in pixels.
+
+        :param coordinates: The coordinates of the box (x1, y1, x2, y2)
+        :param top_origin: Indicates the origin from which the coordinates are calculated, False if bottom origin
         :param size: The size of the image as a tuple (width, height)
         :param width: The width of the image in pixels
         :param height: The height of the image in pixels
-        :param kwargs: Additional keyword attributes that should be included in the Box dict
+        :param kwargs: Additional keyword attributes that should be included in the attributes
         :return: A Box object
         """
         (width, height) = size if size else (width, height)
         if len(coordinates) != 4:
             raise TypeError('Coordinates must have exactly four values')
-        if as_ratio:
-            if width is None or height is None:
-                raise TypeError('Image dimensions must be provided if the coordinates are defined as a ratio')
-            coordinates[0] = width * coordinates[0]
-            coordinates[1] = height * coordinates[1]
-            coordinates[2] = width * coordinates[2]
-            coordinates[3] = height * coordinates[3]
+        if width is None or height is None:
+            raise TypeError('Image dimensions must be provided if the coordinates are defined as a ratio')
+        coordinates[0] = width * coordinates[0]
+        coordinates[1] = height * coordinates[1]
+        coordinates[2] = width * coordinates[2]
+        coordinates[3] = height * coordinates[3]
         if not top_origin:
-            if height is None:
-                raise TypeError("Image height must be provided when the origin is bottom-left")
-            coordinates = [coordinates[0], height - coordinates[3], coordinates[2], height - coordinates[1]]
-        obj = cls({'coordinates': coordinates}, kwargs)
-        obj._calc_position()
-        return obj
+            coordinates = cls.__normalize_bottom_origin(coordinates, height)
+        return cls(coordinates, kwargs)
+
+    @staticmethod
+    def position_to_coordinates(left, top, width, height):
+        return [left, top, left + width, top + height]
 
     @staticmethod
     def is_box(obj):
         """
-        Returns true or false if the dict that is provided contains the keys necessary to be a box
+        Returns true or false if the dict that is provided contains the keys or coordinates necessary to be a box
         in the pattern required by this class.
 
-        :param obj: The dict to check
+        :param obj: The dict or array to check
         """
-        return isinstance(obj, Mapping) and (('top' in obj and 'left' in obj and 'width' in obj and 'height' in obj) or
-                                             ('coordinates' in obj and len(obj['coordinates']) == 4))
+        return (isinstance(obj, Mapping) and (('top' in obj and 'left' in obj and 'width' in obj and 'height' in obj) or
+                                              ('coordinates' in obj and len(obj['coordinates']) == 4))) or (
+                       (isinstance(obj, list) or isinstance(obj, tuple)) and len(obj) == 4
+               )
+
+    def __abs__(self):
+        return self.width * self.height
+
+    def __mul__(self, scalar):
+        return Box([x * scalar for x in self.coordinates], self.attributes)
+
+    def __add__(self, other):
+        # TODO: Consider how to combine attributes
+        if isinstance(other, Box):
+            other = other.coordinates
+        if isinstance(other, list) or isinstance(other, tuple):
+            if len(other) == 4:
+                pairs = list(zip(self.coordinates, other))
+                return Box([min(pairs[0]), min(pairs[1]), max(pairs[2]), max(pairs[3])], self.attributes)
+            elif len(other) == 2:
+                c = self.coordinates
+                x = other[0]
+                y = other[1]
+                return Box([c[0] + x, c[1] + y, c[2] + x, c[3] + y], self.attributes)
+        raise ValueError("Invalid value to add to a Box")
+
+    def intersecting_boxes(self, boxes, min_overlap=0):
+        # TODO: Validate why we're zeroing the intersecting boxes to self
+        return [box - [self.left, self.top] for box in boxes if abs(self & box) > abs(box) * min_overlap]
+
+    def __and__(self, other):
+        a = self.coordinates
+        b = other.coordinates
+        intersection = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
+        if intersection[2] < intersection[0] or intersection[3] < intersection[1]:
+            return None
+        else:
+            return Box(intersection)
+
+    def __round__(self, n=None):
+        return Box([round(x, n) for x in self.coordinates], self.attributes)
+
+    def __repr__(self):
+        if self.attributes:
+            return f"Box({list(self.coordinates)}, {repr(self.attributes)})"
+        else:
+            return f"Box({list(self.coordinates)})"
 
     def scaled(self, ratio):
         """
         Creates a new instance of the Box that has been scaled based on the provided ratio (up or down).
+        DEPRECATED in favor of simply using a multiplication operation
 
         :param ratio: The ratio to scale the box; a value less than 1 would scale it down, greater would scale it up
         :return: A Box object
         """
-        box = self.copy()
-        for key, value in box.items():
-            if key == 'coordinates':
-                box[key] = [v * ratio for v in value]
-            elif key in ['top', 'left', 'width', 'height']:
-                box[key] = value * ratio
-        return box
+        return self * ratio
 
     def offset(self, x, y):
         """
         Creates a new instance of the Box that has been offset by the number of pixels in x and y.
+        DEPRECATED in favor of simply using an addition operation
 
         :param x: The number of pixels to offset in the horizontal dimension
         :param y: The number of pixels to offset in the vertical dimension
         :return: A Box object
         """
-        box = self.copy()
-        for k, v in box.items():
-            if k == 'coordinates':
-                box[k] = [v[0] + x, v[1] + y, v[2] + x, v[3] + y]
-            elif k == 'left':
-                box[k] = v + x
-            elif k == 'top':
-                box[k] = v + y
-        return box
-
-    def intersecting_boxes(self, boxes, min_overlap=0):
-        from larry.utils import image
-
-        intersecting = []
-        for box in boxes:
-            if image.box_area(image.box_intersection(self, box)) > image.box_area(box) * min_overlap:
-                intersecting.append(box.offset(-self['left'], -self['top']))
-        return intersecting
+        return self + [x, y]
 
     @property
-    def area(self):
-        """
-        Returns the area of the Box in square pixels
-        """
-        return self['width'] * self['height']
+    def data(self):
+        d = self._attributes if self._attributes else {}
+        d.update({
+            "coordinates": list(self._coordinates),
+            "left": self.left,
+            "top": self.top,
+            "width": self.width,
+            "height": self.height
+        })
+        return d
 
-    @property
-    def top(self):
-        """
-        Returns the top of the box in pixels measured from the top-left.
-        """
-        return self['top']
-
-    @property
-    def left(self):
-        """
-        Returns the left-most location of the box in pixels measured from the top-left.
-        """
-        return self['left']
-
-    @property
-    def height(self):
-        """
-        Returns the height of the box in pixels.
-        """
-        return self['height']
-
-    @property
-    def width(self):
-        """
-        Returns the width of the box in pixels.
-        """
-        return self['width']
-
-    @property
-    def coordinates(self):
-        """
-        Returns the coordinates (x1, y1, x2, y2) of the box in pixels measured from the top-left.
-        """
-        return self['coordinates']
-
-    def _calc_coordinates(self):
-        self['coordinates'] = [self['left'], self['top'], self['left'] + self['width'],
-                               self['top'] + self['height']]
-
-    def _calc_position(self):
-        self['left'] = self['coordinates'][0]
-        self['top'] = self['coordinates'][1]
-        self['width'] = self['coordinates'][2] - self['coordinates'][0]
-        self['height'] = self['coordinates'][3] - self['coordinates'][1]
-
-    def __missing__(self, key):
-        if key == 'coordinates':
-            self._calc_coordinates()
-            return self[key]
-        elif key in ['top', 'left', 'width', 'height']:
-            self._calc_position()
-            return self[key]
-        else:
-            raise KeyError(key)
+    def to_dict(self):
+        return self.data
