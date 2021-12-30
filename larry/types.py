@@ -114,12 +114,7 @@ class Box:
         elif isinstance(value, Mapping):
             value = value.copy()
             self._coordinates = self.__case_insensitive_pop(value, "coordinates", raise_if_missing=False)
-            if self._coordinates:
-                self.__case_insensitive_pop(value, "top", raise_if_missing=False)
-                self.__case_insensitive_pop(value, "left", raise_if_missing=False)
-                self.__case_insensitive_pop(value, "width", raise_if_missing=False)
-                self.__case_insensitive_pop(value, "height", raise_if_missing=False)
-            else:
+            if not self._coordinates:
                 self._coordinates = self.position_to_coordinates(
                     self.__case_insensitive_pop(value, "left"),
                     self.__case_insensitive_pop(value, "top"),
@@ -128,7 +123,8 @@ class Box:
                 )
             if attributes:
                 value.update(attributes)
-            self._attributes = value
+            self._attributes = {k: v for k, v in value.items()
+                                if k.lower() not in ["coordinates", "left", "top", "width", "height"]}
         if len(self._coordinates) != 4:
             raise ValueError("Box coordinates must have exactly four values")
 
@@ -177,6 +173,29 @@ class Box:
         if self._attributes is None:
             self._attributes = {}
         self._attributes[key] = value
+
+    def copy(self, location_only=False):
+        return Box(tuple(self._coordinates),
+                   self._attributes.copy() if self._attributes and not location_only else None)
+
+    def __delattr__(self, item):
+        if item == "attributes":
+            self._attributes = None
+        elif self._attributes:
+            del self._attributes[item]
+        else:
+            raise KeyError(f"KeyError: '{item}'")
+
+    def __delitem__(self, key):
+        if self._attributes:
+            del self._attributes[key]
+        else:
+            raise KeyError(f"KeyError: '{key}'")
+
+    def pop(self, item):
+        if self._attributes is None:
+            raise KeyError(f"KeyError: '{item}'")
+        return self._attributes.pop(item)
 
     @classmethod
     def from_dict(cls, obj):
@@ -313,19 +332,22 @@ class Box:
         return Box([x * scalar for x in self.coordinates], self.attributes)
 
     def __add__(self, other):
-        # TODO: Consider how to combine attributes
+        # TODO: Consider how to combine attributes if at all
         if isinstance(other, Box):
             other = other.coordinates
         if isinstance(other, list) or isinstance(other, tuple):
             if len(other) == 4:
                 pairs = list(zip(self.coordinates, other))
-                return Box([min(pairs[0]), min(pairs[1]), max(pairs[2]), max(pairs[3])], self.attributes)
+                return Box([min(pairs[0]), min(pairs[1]), max(pairs[2]), max(pairs[3])])
             elif len(other) == 2:
                 c = self.coordinates
                 x = other[0]
                 y = other[1]
-                return Box([c[0] + x, c[1] + y, c[2] + x, c[3] + y], self.attributes)
+                return Box([c[0] + x, c[1] + y, c[2] + x, c[3] + y])
         raise ValueError("Invalid value to add to a Box")
+
+    def __radd__(self, other):
+        return self.copy(True) if other == 0 else self + other
 
     def intersecting_boxes(self, boxes, min_overlap=0):
         # TODO: Validate why we're zeroing the intersecting boxes to self
