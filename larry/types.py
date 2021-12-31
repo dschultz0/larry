@@ -169,6 +169,11 @@ class Box:
             return self._attributes[item]
         raise KeyError(f"KeyError: '{item}'")
 
+    def get(self, key, default=None):
+        if self._attributes and key in self._attributes:
+            return self._attributes[key]
+        return default
+
     def __setitem__(self, key, value):
         if self._attributes is None:
             self._attributes = {}
