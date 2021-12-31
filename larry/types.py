@@ -169,6 +169,9 @@ class Box:
             return self._attributes[item]
         raise KeyError(f"KeyError: '{item}'")
 
+    def __contains__(self, item):
+        return item in self._attributes if self._attributes else False
+
     def get(self, key, default=None):
         if self._attributes and key in self._attributes:
             return self._attributes[key]
