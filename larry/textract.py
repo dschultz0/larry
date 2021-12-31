@@ -92,7 +92,7 @@ def _block_to_box(block, width, height, page_indices=None):
                                        height=indices[3] - indices[1],
                                        width=indices[2] - indices[0],
                                        text=block['Text'],
-                                       confidence=block['Confidence']).offset(indices[0], indices[1])
+                                       confidence=block['Confidence']) + [indices[0], indices[1]]
     else:
         return Box.from_position_ratio(block['Geometry']['BoundingBox'],
                                        height=height,

@@ -351,7 +351,7 @@ class Box:
                 c = self.coordinates
                 x = other[0]
                 y = other[1]
-                return Box([c[0] + x, c[1] + y, c[2] + x, c[3] + y])
+                return Box([c[0] + x, c[1] + y, c[2] + x, c[3] + y], self._attributes)
         raise ValueError("Invalid value to add to a Box")
 
     def __radd__(self, other):
