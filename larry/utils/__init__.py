@@ -40,7 +40,7 @@ def JSONDecoder(dct):
     if '__Assignment__' in dct:
         return Assignment(dct)
     if '__Box__' in dct:
-        return Box.from_dict(dct)
+        return Box(dct)
     return dct
 
 
