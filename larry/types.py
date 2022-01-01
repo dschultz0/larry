@@ -358,8 +358,7 @@ class Box:
         return self.copy(True) if other == 0 else self + other
 
     def intersecting_boxes(self, boxes, min_overlap=0):
-        # TODO: Validate why we're zeroing the intersecting boxes to self
-        return [box - [self.left, self.top] for box in boxes if abs(self & box) > abs(box) * min_overlap]
+        return [box for box in boxes if self & box and abs(self & box) > abs(box) * min_overlap]
 
     def __and__(self, other):
         a = self.coordinates
