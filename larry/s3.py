@@ -1,3 +1,4 @@
+from types import ModuleType
 import boto3
 from boto3.s3.transfer import TransferConfig
 import os
@@ -10,7 +11,6 @@ import csv
 from io import StringIO, BytesIO
 import tempfile
 from collections.abc import Mapping
-from types import ModuleType
 
 import larry.core
 from larry import utils
@@ -1377,6 +1377,19 @@ def download_to_temp(*location, bucket=None, key=None, uri=None):
     download(fp, bucket=bucket, key=key, uri=uri)
     fp.seek(0)
     return fp
+
+
+@_resolve_location(require_key=True)
+def generate_presigned_get(*location, bucket=None, key=None, uri=None, expires_in=None, http_method=None):
+    params = {
+        "ClientMethod": "get_object",
+        "Params": {"Bucket": bucket, "Key": key}
+    }
+    if expires_in:
+        params["ExpiresIn"] = expires_in
+    if http_method:
+        params["HttpMethod"] = http_method
+    return __resource.meta.client.generate_presigned_url(**params)
 
 
 @_resolve_location(require_key=True)
