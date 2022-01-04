@@ -354,6 +354,14 @@ class Box:
                 return Box([c[0] + x, c[1] + y, c[2] + x, c[3] + y], self._attributes)
         raise ValueError("Invalid value to add to a Box")
 
+    def __sub__(self, other):
+        if (isinstance(other, list) or isinstance(other, tuple)) and len(other) == 2:
+            c = self.coordinates
+            x = other[0]
+            y = other[1]
+            return Box([c[0] - x, c[1] - y, c[2] - x, c[3] - y], self._attributes)
+        raise ValueError("Invalid value to subtract from a Box")
+
     def __radd__(self, other):
         return self.copy(True) if other == 0 else self + other
 
