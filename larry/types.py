@@ -1,4 +1,5 @@
 from collections import Mapping
+import warnings
 
 
 class ClientError(Exception):
@@ -103,6 +104,7 @@ class Box:
         # and height attributes
         print(json.dumps(box, cls=JSONEncoder)
     """
+    MAX_SCALE = 6
 
     def __init__(self, value, attributes=None):
         if isinstance(value, Box):
@@ -127,6 +129,7 @@ class Box:
                                 if k.lower() not in ["coordinates", "left", "top", "width", "height", "__box__"]}
         if len(self._coordinates) != 4:
             raise ValueError("Box coordinates must have exactly four values")
+        self._coordinates = [round(c, self.MAX_SCALE) for c in self._coordinates]
 
     @property
     def coordinates(self):
@@ -142,11 +145,11 @@ class Box:
 
     @property
     def width(self):
-        return self._coordinates[2] - self._coordinates[0]
+        return round(self._coordinates[2] - self._coordinates[0], self.MAX_SCALE)
 
     @property
     def height(self):
-        return self._coordinates[3] - self._coordinates[1]
+        return round(self._coordinates[3] - self._coordinates[1], self.MAX_SCALE)
 
     @property
     def attributes(self):
@@ -394,6 +397,7 @@ class Box:
         :param ratio: The ratio to scale the box; a value less than 1 would scale it down, greater would scale it up
         :return: A Box object
         """
+        warnings.warn("Use the multiplication operator", DeprecationWarning)
         return self * ratio
 
     def offset(self, x, y):
@@ -405,6 +409,7 @@ class Box:
         :param y: The number of pixels to offset in the vertical dimension
         :return: A Box object
         """
+        warnings.warn("Use the addition operator", DeprecationWarning)
         return self + [x, y]
 
     @property
