@@ -168,6 +168,8 @@ class Box:
         raise AttributeError(f"AttributeError: 'Box' object has no attribute '{item}'")
 
     def __getitem__(self, item):
+        if item in ["coordinates", "top", "left", "width", "height"]:
+            return getattr(self, item)
         if self._attributes and item in self._attributes:
             return self._attributes[item]
         raise KeyError(f"KeyError: '{item}'")
@@ -176,6 +178,8 @@ class Box:
         return item in self._attributes if self._attributes else False
 
     def get(self, key, default=None):
+        if key in ["coordinates", "top", "left", "width", "height"]:
+            return getattr(self, key)
         if self._attributes and key in self._attributes:
             return self._attributes[key]
         return default
