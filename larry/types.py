@@ -127,6 +127,8 @@ class Box:
                 value.update(attributes)
             self._attributes = {k: v for k, v in value.items()
                                 if k.lower() not in ["coordinates", "left", "top", "width", "height", "__box__"]}
+        else:
+            raise ValueError(f"Invalid value for Box: {value}")
         if len(self._coordinates) != 4:
             raise ValueError("Box coordinates must have exactly four values")
         self._coordinates = [round(c, self.MAX_SCALE) for c in self._coordinates]

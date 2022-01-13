@@ -57,7 +57,7 @@ def augment_box_attributes(box):
 
 
 def box_area(box):
-    return abs(Box(box))
+    return abs(Box(box)) if box else 0
 
 
 def box_intersection(a, b):
