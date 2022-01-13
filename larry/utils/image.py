@@ -72,7 +72,7 @@ def intersection_over_union(a, b):
     if intersection:
         return abs(intersection) / (abs(a) + abs(b) - abs(intersection))
     else:
-        return None
+        return 0
 
 
 def render_boxes(boxes,
