@@ -452,11 +452,15 @@ def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='u
     objct = read(bucket=bucket, key=key, uri=uri)
     lines = objct.decode(encoding).split(newline)
     records = []
-    for line in lines:
+    for i, line in enumerate(lines):
         if len(line) > 0:
             # TODO: Would a handler or local constant be a better idea here?
             if o_type == dict:
-                records.append(json.loads(line, object_hook=utils.JSONDecoder))
+                try:
+                    records.append(json.loads(line, object_hook=utils.JSONDecoder))
+                except json.decoder.JSONDecodeError as e:
+                    # TODO: Tighten up this exception
+                    raise Exception(f"Failed to read json on line {i+1}: {str(e)}") from e
             elif o_type == str:
                 records.append(line)
             else:
