@@ -6,13 +6,14 @@ import posixpath
 import re
 import uuid
 import json
-import inspect
 import csv
 from io import StringIO, BytesIO
 import tempfile
 from collections.abc import Mapping
 import warnings
 import larry.core
+from larry.utils import larrydispatch
+from functools import singledispatch
 from larry import utils
 from larry import sts
 from larry import ClientError
@@ -21,7 +22,6 @@ from urllib import parse
 from urllib import request
 from zipfile import ZipFile
 from enum import Enum
-from functools import wraps
 
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
@@ -85,8 +85,8 @@ def set_session(aws_access_key_id=None,
     __resource = __session.resource('s3')
 
 
-def _normalize_location(*location, uri=None, bucket=None, key=None,
-                         require_bucket=True, require_key=True, key_arg='key', allow_multiple=False):
+def _normalize_location(*location, uri: str = None, bucket: str = None, key: str = None,
+                        require_bucket=True, require_key=True, key_arg='key', allow_multiple=False):
     if not any([uri, bucket, key]):
         if len(location) == 0:
             raise TypeError('A location must be specified')
@@ -256,6 +256,7 @@ class Bucket(ResourceWrapper):
         """
         Returns a BucketWebsite resource object.
         """
+
         class BucketWebsite(ResourceWrapper):
             def __init__(self, bucket):
                 super().__init__(bucket.Website())
@@ -277,20 +278,6 @@ def delete(*location, bucket=None, key=None, uri=None):
         Bucket(bucket=bucket).delete_objects(Delete={'Objects': [{'Key': k} for k in key], 'Quiet': True})
     else:
         Object(bucket=bucket, key=key).delete()
-
-
-def _get_obj(*location, bucket=None, key=None, uri=None):
-    """
-    Performs a 'get' of the object defined by the bucket/key pair or uri.
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :return: Dict containing the Body of the object and associated attributes
-    """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return Object(bucket=bucket, key=key).get()
 
 
 def size(*location, bucket=None, key=None, uri=None):
@@ -333,11 +320,11 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None):
     :return: The bytes contained in the object
     """
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return _get_obj(bucket=bucket, key=key, uri=uri)['Body'].read(byte_count)
+    return Object(bucket=bucket, key=key).get()['Body'].read(byte_count)
 
 
-def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
-            allow_single_quotes=False, use_decoder=False, **kwargs):
+@larrydispatch
+def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and loads the
     contents into an object of the specified type.
@@ -354,137 +341,115 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
     :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param use_decoder: Indicate that JSON objects should be read in with the using the larry decoder and converted
-    to objects.
-    :param allow_single_quotes: Allow single quotes to be used in JSON data (only used for dict and json type)
     :return: An object representation of the data in S3
     """
+    raise TypeError("Unsupported type")
+
+
+@read_as.register(module_name="numpy")
+@read_as.register(type_name="ndarray")
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    if isinstance(type_, type) and type_.__name__ == 'ndarray':
-        try:
-            import numpy as np
-            with tempfile.TemporaryFile() as fp:
-                download(fp, bucket=bucket, key=key, uri=uri)
-                fp.seek(0)
-                return np.fromfile(fp)
-        except ImportError as e:
-            # Simply raise the ImportError to let the user know this requires Numpy to function
-            raise e
-    elif (isinstance(type_, ModuleType) and type_.__name__ in ['cv2', 'cv2.cv2']) or \
-            (callable(type_) and type_.__name__ == 'imread'):
-        fp = None
-        try:
-            fp = tempfile.NamedTemporaryFile(delete=False)
+    try:
+        import numpy as np
+        with tempfile.TemporaryFile() as fp:
             download(fp, bucket=bucket, key=key, uri=uri)
-            fp.close()
-            if type_.__name__ in ['cv2', 'cv2.cv2']:
-                img = type_.imread(fp.name, **kwargs)
-            else:
-                img = type_(fp.name, **kwargs)
-        finally:
-            if fp:
-                os.remove(fp.name)
-        return img
-    else:
-        objct = read(bucket=bucket, key=key, uri=uri)
-        if type_ == dict or type_ == json:
-            try:
-                return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
-            except json.JSONDecodeError as e:
-                if allow_single_quotes:
-                    # TODO: Use a more stable replace operation that will handle nested quotes
-                    return json.loads(objct.decode(encoding).replace("'", '"'), object_hook=utils.JSONDecoder)
-                else:
-                    raise e
-        elif type_ == str:
-            return objct.decode(encoding)
-        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
-            return type_.open(BytesIO(objct))
+            fp.seek(0)
+            return np.fromfile(fp)
+    except ImportError as ex:
+        # Simply raise the ImportError to let the user know this requires Numpy to function
+        raise ex
+
+
+@read_as.register(module_name="cv2")
+@read_as.register(callable_name="imread")
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    fp = None
+    try:
+        fp = tempfile.NamedTemporaryFile(delete=False)
+        download(fp, bucket=bucket, key=key, uri=uri)
+        fp.close()
+        if type_.__name__ in ['cv2', 'cv2.cv2']:
+            img = type_.imread(fp.name, **kwargs)
         else:
-            raise TypeError('Unhandled type')
+            img = type_(fp.name, **kwargs)
+    finally:
+        if fp:
+            os.remove(fp.name)
+    return img
 
 
-def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
+@read_as.register(eq=json)
+@read_as.register(eq=dict)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
-    lines = objct.decode(encoding).split(newline)
-    records = []
-    for line in lines:
-        if len(line) > 0:
-            # TODO: Would a handler or local constant be a better idea here?
-            if o_type == dict:
-                records.append(json.loads(line, object_hook=utils.JSONDecoder))
-            elif o_type == str:
-                records.append(line)
-            else:
-                raise TypeError('Unhandled type')
-    return records
+
+    try:
+        return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
+    except json.JSONDecodeError as ex:
+        if kwargs.get("allow_single_quotes"):
+            # TODO: Use a more stable replace operation that will handle nested quotes
+            return json.loads(objct.decode(encoding).replace("'", '"'), object_hook=utils.JSONDecoder)
+        else:
+            raise ex
 
 
-def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    warnings.warn("Use read_as(iter(<type>), ...)", DeprecationWarning)
+@read_as.register(eq=str)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
-    lines = objct.decode(encoding).split(newline)
-    for line in lines:
-        if len(line) > 0:
-            # TODO: Would a handler or local constant be a better idea here?
-            if o_type == dict:
-                yield json.loads(line, object_hook=utils.JSONDecoder)
-            elif o_type == str:
-                yield line
-            else:
-                raise TypeError('Unhandled type')
+    return objct.decode(encoding)
 
 
-def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', use_decoder=False):
-    warnings.warn("Use read_as(dict, ...)", DeprecationWarning)
+@read_as.register(module_type="PIL.Image")
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return read_as(dict, bucket=bucket, key=key, uri=uri, encoding=encoding, use_decoder=use_decoder)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return type_.open(BytesIO(objct))
 
 
-def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8'):
-    warnings.warn("Use read_as(str, ...)", DeprecationWarning)
+@read_as.register(eq=[dict])
+@read_as.register(eq=[json])
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return read_as(str, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    lines = objct.decode(encoding).split(kwargs.get("newline", "\n"))
+    if kwargs.get("use_decoder"):
+        return [json.loads(line, object_hook=utils.JSONDecoder) for line in lines if len(line) > 0]
+    else:
+        return [json.loads(line) for line in lines if len(line) > 0]
 
 
-def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    warnings.warn("Use read_as([dict], ...)", DeprecationWarning)
+@read_as.register(eq=[str])
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return read_list_as(dict, bucket=bucket, key=key, uri=uri,
-                        encoding=encoding, newline=newline)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    lines = objct.decode(encoding).split(kwargs.get("newline", "\n"))
+    return [line for line in lines if len(line) > 0]
 
 
-def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    warnings.warn("Use read_as([str], ...)", DeprecationWarning)
+@read_as.register(eq=csv)
+@read_as.register(eq=csv.reader)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return read_list_as(str, bucket=bucket, key=key, uri=uri,
-                        encoding=encoding, newline=newline)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return csv.reader(StringIO(objct), **kwargs)
+
+
+@read_as.register(eq=csv.DictReader)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return csv.DictReader(StringIO(objct), **kwargs)
 
 
 def __write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
-            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None, 
+            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
             tags=None):
     """
     Write an object to the bucket/key pair or uri.
-
-    :param body: Data to write
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param acl: The canned ACL to apply to the object
-    :param content_type: A standard MIME type describing the format of the object data
-    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
-    :param content_language: The language the content is in.
-    :param content_length: Size of the body in bytes.
-    :param metadata: A map of metadata to store with the object in S3.
-    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
-    :param storage_class: The S3 storage class to store the object in.
-    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The URI of the object written to S3
     """
     params = larry.core.map_parameters(locals(), {
@@ -542,9 +507,10 @@ __content_type_to_pillow_format = {
 }
 
 
-def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
-             columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-             content_length=None, metadata=None, sse=None, storage_class=None, tags=None, **kwargs):
+@larrydispatch(1)
+def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+             content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+             storage_class=None, tags=None, **kwargs):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -555,10 +521,6 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
-    :param newline: Character(s) to use as a newline for list objects
-    :param delimiter: Column delimiter to use, ',' by default
-    :param columns: The columns to write out from the source rows, dict keys or list indexes
-    :param headers: Headers to add to the output
     :param acl: The canned ACL to apply to the object
     :param content_type: Content type to apply to the file, if not present a suggested type will be applied
     :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
@@ -571,105 +533,132 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The URI of the object written to S3
     """
+    raise TypeError('Unhandled type')
+
+
+def __initialize_content_type(content_type, key, default):
+    if content_type is None:
+        suffix = os.path.splitext(key)[1]
+        extension = suffix[1:].lower() if suffix else None
+        handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
+        return __extension_types.get(extension, default)
+    else:
+        return content_type
+
+
+@write_as.register(module_name="cv2")
+@write_as.register(callable_name="imwrite")
+def _(value, type_, *location, bucket: str = None, key: str = None, uri: str = None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     suffix = os.path.splitext(key)[1]
-    extension = suffix[1:] if suffix else None
-    if (isinstance(type_, ModuleType) and type_.__name__ in ['cv2', 'cv2.cv2']) or \
-            (callable(type_) and type_.__name__ == 'imwrite'):
-        handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
-        try:
-            if content_type is None:
-                content_type = __extension_types.get(extension, __extension_types.get(suffix[1:].lower(), 'image/png'))
-            if type_.__name__ in ['cv2', 'cv2.cv2']:
-                type_.imwrite(filepath, value, **kwargs)
-            else:
-                type_(filepath, value, **kwargs)
-            with open(filepath, 'rb') as fp:
-                result = upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                                content_encoding=content_encoding, content_language=content_language,
-                                content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                                tags=tags)
-        finally:
-            os.close(handle)
-            if os.path.exists(filepath):
-                os.remove(filepath)
-        return result
-    else:
-        if type_ == str:
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain')
-            objct = value
-        elif type_ == dict or type_ == json:
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'application/json')
-            objct = json.dumps(value, cls=utils.JSONEncoder, **kwargs)
-        elif isinstance(type_, list) and len(type_) > 0 and type_[0] == dict:
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain')
-            buff = StringIO()
-            for row in value:
-                buff.write(json.dumps(row, cls=utils.JSONEncoder, **kwargs) + newline)
-            objct = buff.getvalue()
-        elif type_ == csv:
-            # TODO: Flush this out to fully use csv library
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain')
-            buff = StringIO()
-            # empty
-            if value is None or len(value) == 0:
-                if headers:
-                    buff.write(_array_to_string(headers, delimiter) + newline)
-                buff.write('')
-
-            # list
-            elif isinstance(value[0], list):
-                indices = columns if columns else None
-                if headers:
-                    buff.write(_array_to_string(headers, delimiter) + newline)
-                for row in value:
-                    buff.write(_array_to_string(row, delimiter, indices) + newline)
-
-            # dict
-            elif isinstance(value[0], Mapping):
-                keys = columns if columns else value[0].keys()
-                buff.write(_array_to_string(headers if headers else keys, delimiter) + newline)
-
-                for row in value:
-                    line = ''
-                    for i, k in enumerate(keys):
-                        value = '' if row.get(k) is None else str(row.get(k))
-                        line = value if i == 0 else line + delimiter + value
-                    buff.write(line + newline)
-
-            # string
-            elif isinstance(value[0], str):
-                buff.writelines(value)
-            else:
-                raise TypeError('Invalid input')
-            objct = buff.getvalue()
-        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
-            objct = BytesIO()
-            fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
-            value.save(objct, fmt)
-            objct.seek(0)
-            if content_type is None:
-                content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
+    content_type = __initialize_content_type(content_type, key, "image/png")
+    handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
+    try:
+        if type_.__name__ in ['cv2', 'cv2.cv2']:
+            type_.imwrite(filepath, value, **kwargs)
         else:
-            raise TypeError('Unhandled type')
-        return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
+            type_(filepath, value, **kwargs)
+        with open(filepath, 'rb') as fp:
+            result = upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                            content_encoding=content_encoding, content_language=content_language,
+                            content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                            tags=tags)
+    finally:
+        os.close(handle)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    return result
 
 
-def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
-                 content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-                 storage_class=None,  tags=None, **params):
-    warnings.warn("Use read_as(iter(<type>), ...)", DeprecationWarning)
+@write_as.register(eq="str")
+def _(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return write(value, bucket=bucket, key=key, uri=uri, newline=newline, acl=acl, content_type=content_type,
-                 content_encoding=content_encoding, content_language=content_language, content_length=content_length,
-                 metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, **params)
+    content_type = __initialize_content_type(content_type, key, "text/plain")
+    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
+
+
+@write_as.register(eq=dict)
+@write_as.register(eq=json)
+def _(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    content_type = __initialize_content_type(content_type, key, "application/json")
+    value = json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs)
+    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
+
+@write_as.register(eq=[dict])
+@write_as.register(eq=[json])
+def _(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    content_type = __initialize_content_type(content_type, key, "application/json")
+    buff = StringIO()
+    for row in value:
+        buff.write(json.dumps(row, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs) + kwargs.get("newline", "\n"))
+    value = buff.getvalue()
+    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
+
+
+
+    elif type_ == csv:
+        # TODO: Flush this out to fully use csv library
+        if content_type is None:
+            content_type = __extension_types.get(extension, 'text/plain')
+        buff = StringIO()
+        # empty
+        if value is None or len(value) == 0:
+            if headers:
+                buff.write(_array_to_string(headers, delimiter) + newline)
+            buff.write('')
+
+        # list
+        elif isinstance(value[0], list):
+            indices = columns if columns else None
+            if headers:
+                buff.write(_array_to_string(headers, delimiter) + newline)
+            for row in value:
+                buff.write(_array_to_string(row, delimiter, indices) + newline)
+
+        # dict
+        elif isinstance(value[0], Mapping):
+            keys = columns if columns else value[0].keys()
+            buff.write(_array_to_string(headers if headers else keys, delimiter) + newline)
+
+            for row in value:
+                line = ''
+                for i, k in enumerate(keys):
+                    value = '' if row.get(k) is None else str(row.get(k))
+                    line = value if i == 0 else line + delimiter + value
+                buff.write(line + newline)
+
+        # string
+        elif isinstance(value[0], str):
+            buff.writelines(value)
+        else:
+            raise TypeError('Invalid input')
+        objct = buff.getvalue()
+    elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
+        objct = BytesIO()
+        fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
+        value.save(objct, fmt)
+        objct.seek(0)
+        if content_type is None:
+            content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
 
 
 def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
@@ -691,7 +680,7 @@ def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, 
 
 def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
           content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-          storage_class=None,  tags=None, **params):
+          storage_class=None, tags=None, **params):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -819,7 +808,7 @@ def _array_to_string(row, delimiter, indices=None):
 
 def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
                     columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-                    content_length=None, metadata=None, sse=None, storage_class=None,  tags=None):
+                    content_length=None, metadata=None, sse=None, storage_class=None, tags=None):
     warnings.warn("Use write_as(row, csv, ...)", DeprecationWarning)
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
@@ -997,7 +986,7 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
                     buff.write(__value_bytes_as(_array_to_string(v, delimiter, columns), str,
                                                 encoding=encoding, suffix=newline)[0])
                 buff.seek(0)
-                content=buff.getvalue()
+                content = buff.getvalue()
 
             # else assume it was non-string values that can be written out
             else:
@@ -1525,6 +1514,54 @@ def url(*location, bucket=None, key=None, uri=None):
         return _bucket_url(bucket)
 
 
+def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as([o_type], bucket=bucket, key=key, encoding=encoding, newline=newline)
+
+
+def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return iter(read_as(bucket=bucket, key=key, encoding=encoding, newline=newline))
+
+
+def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', use_decoder=False):
+    warnings.warn("Use read_as(dict, ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as(dict, bucket=bucket, key=key, uri=uri, encoding=encoding, use_decoder=use_decoder)
+
+
+def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8'):
+    warnings.warn("Use read_as(str, ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as(str, bucket=bucket, key=key, uri=uri)
+
+
+def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([dict], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as([dict], bucket=bucket, key=key, uri=uri,
+                   encoding=encoding, newline=newline)
+
+
+def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([str], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as([str], bucket=bucket, key=key, uri=uri,
+                   encoding=encoding, newline=newline)
+
+
+def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+                 content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+                 storage_class=None, tags=None, **params):
+    warnings.warn("Use read_as(iter(<type>), ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return write(value, bucket=bucket, key=key, uri=uri, newline=newline, acl=acl, content_type=content_type,
+                 content_encoding=content_encoding, content_language=content_language, content_length=content_length,
+                 metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, **params)
+
+
 class ErrorCodes(Enum):
     AccessDenied = 'AccessDenied'
     AccountProblem = 'AccountProblem'
@@ -1608,4 +1645,3 @@ class ErrorCodes(Enum):
     UnexpectedContent = 'UnexpectedContent'
     UnresolvableGrantByEmailAddress = 'UnresolvableGrantByEmailAddress'
     UserKeyMustBeSpecified = 'UserKeyMustBeSpecified'
-
