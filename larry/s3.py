@@ -7,12 +7,13 @@ import re
 import uuid
 import json
 import csv
+import mimetypes
 from io import StringIO, BytesIO
 import tempfile
 from collections.abc import Mapping
 import warnings
 import larry.core
-from larry.utils import larrydispatch
+from larry.utils import larrydispatch, currydispatch
 from functools import singledispatch
 from larry import utils
 from larry import sts
@@ -45,6 +46,29 @@ CLASS_ONEZONE_IA = 'ONEZONE_IA'
 CLASS_INTELLIGENT_TIERING = 'INTELLIGENT_TIERING'
 CLASS_GLACIER = 'GLACIER'
 CLASS_DEEP_ARCHIVE = 'DEEP_ARCHIVE'
+
+
+# The following associations override guesses from mimetypes
+__extension_types = {
+    'csv': 'text/csv',
+    'jsonl': 'application/x-jsonlines',
+    'js': 'text/javascript',
+    'zip': 'application/zip',
+    'sql': 'application/sql',
+    'webp': 'image/webp',
+    'ico': 'image/vnd.microsoft.icon'
+}
+
+__content_type_to_pillow_format = {
+    'image/png': 'PNG',
+    'image/jpeg': 'JPEG',
+    'image/gif': 'GIF',
+    'image/tiff': 'TIFF',
+    'image/webp': 'WebP',
+    'image/bmp': 'BMP',
+    'image/vnd.microsoft.icon': 'ICO',
+    'image/x-icon': 'ICO'
+}
 
 
 def __getattr__(name):
@@ -470,44 +494,12 @@ def __write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, 
     return join_uri(bucket, key)
 
 
-__extension_types = {
-    'css': 'text/css',
-    'html': 'text/html',
-    'xhtml': 'text/html',
-    'htm': 'text/html',
-    'xml': 'text/xml',
-    'csv': 'text/csv',
-    'txt': 'text/plain',
-    'png': 'image/png',
-    'jpeg': 'image/jpeg',
-    'jpg': 'image/jpeg',
-    'gif': 'image/gif',
-    'jsonl': 'application/x-jsonlines',
-    'json': 'application/json',
-    'js': 'application/javascript',
-    'zip': 'application/zip',
-    'pdf': 'application/pdf',
-    'sql': 'application/sql',
-    'tiff': 'image/tiff',
-    'tif': 'image/tiff',
-    'webp': 'image/webp',
-    'bmp': 'image/bmp',
-    'ico': 'image/vnd.microsoft.icon',
-    'svg': 'image/svg+xml'
-}
-
-__content_type_to_pillow_format = {
-    'image/png': 'PNG',
-    'image/jpeg': 'JPEG',
-    'image/gif': 'GIF',
-    'image/tiff': 'TIFF',
-    'image/webp': 'WebP',
-    'image/bmp': 'BMP',
-    'image/vnd.microsoft.icon': 'ICO'
-}
+def __retrieve_curried_location(value, type_, *location, bucket=None, key=None, uri=None):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return {"bucket": bucket, "key": key, "uri": uri}
 
 
-@larrydispatch(1)
+@currydispatch(1, TypeError('Unhandled type'), pre_curry=__retrieve_curried_location)
 def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
              content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
              storage_class=None, tags=None, **kwargs):
@@ -533,25 +525,24 @@ def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None,
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The URI of the object written to S3
     """
-    raise TypeError('Unhandled type')
+    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
 
 
-def __initialize_content_type(content_type, key, default):
+def __initialize_content_type(content_type, key, default=None):
     if content_type is None:
         suffix = os.path.splitext(key)[1]
         extension = suffix[1:].lower() if suffix else None
-        handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
-        return __extension_types.get(extension, default)
-    else:
-        return content_type
+        content_type = __extension_types.get(extension, mimetypes.guess_type(key)[0])
+        content_type = content_type if content_type else default
+    return content_type
 
 
 @write_as.register(module_name="cv2")
 @write_as.register(callable_name="imwrite")
-def _(value, type_, *location, bucket: str = None, key: str = None, uri: str = None, acl=None, content_type=None,
-      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-      storage_class=None, tags=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+def _(value, type_, key, content_type=None, **kwargs):
     suffix = os.path.splitext(key)[1]
     content_type = __initialize_content_type(content_type, key, "image/png")
     handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
@@ -561,126 +552,69 @@ def _(value, type_, *location, bucket: str = None, key: str = None, uri: str = N
         else:
             type_(filepath, value, **kwargs)
         with open(filepath, 'rb') as fp:
-            result = upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                            content_encoding=content_encoding, content_language=content_language,
-                            content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                            tags=tags)
+            result = fp.read()
     finally:
         os.close(handle)
         if os.path.exists(filepath):
             os.remove(filepath)
-    return result
+    return {"value": result, "content_type": content_type}
 
 
 @write_as.register(eq="str")
-def _(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
-      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-      storage_class=None, tags=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    content_type = __initialize_content_type(content_type, key, "text/plain")
-    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                   content_encoding=content_encoding, content_language=content_language,
-                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                   tags=tags)
+def _(value, key=None, content_type=None, **kwargs):
+    return {"value": value, "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
 @write_as.register(eq=dict)
 @write_as.register(eq=json)
-def _(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
-      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-      storage_class=None, tags=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    content_type = __initialize_content_type(content_type, key, "application/json")
-    value = json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs)
-    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                   content_encoding=content_encoding, content_language=content_language,
-                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                   tags=tags)
+def _(value, key=None, content_type=None, **kwargs):
+    return {"value": json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs),
+            "content_type": __initialize_content_type(content_type, key, "application/json")}
+
 
 @write_as.register(eq=[dict])
 @write_as.register(eq=[json])
-def _(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
-      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-      storage_class=None, tags=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    content_type = __initialize_content_type(content_type, key, "application/json")
+def _(value, key=None, content_type=None, **kwargs):
     buff = StringIO()
     for row in value:
         buff.write(json.dumps(row, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs) + kwargs.get("newline", "\n"))
-    value = buff.getvalue()
-    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                   content_encoding=content_encoding, content_language=content_language,
-                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                   tags=tags)
+    return {"value": buff.getvalue(),
+            "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
-
-    elif type_ == csv:
-        # TODO: Flush this out to fully use csv library
-        if content_type is None:
-            content_type = __extension_types.get(extension, 'text/plain')
-        buff = StringIO()
-        # empty
-        if value is None or len(value) == 0:
-            if headers:
-                buff.write(_array_to_string(headers, delimiter) + newline)
-            buff.write('')
-
-        # list
-        elif isinstance(value[0], list):
-            indices = columns if columns else None
-            if headers:
-                buff.write(_array_to_string(headers, delimiter) + newline)
-            for row in value:
-                buff.write(_array_to_string(row, delimiter, indices) + newline)
-
-        # dict
-        elif isinstance(value[0], Mapping):
-            keys = columns if columns else value[0].keys()
-            buff.write(_array_to_string(headers if headers else keys, delimiter) + newline)
-
-            for row in value:
-                line = ''
-                for i, k in enumerate(keys):
-                    value = '' if row.get(k) is None else str(row.get(k))
-                    line = value if i == 0 else line + delimiter + value
-                buff.write(line + newline)
-
-        # string
-        elif isinstance(value[0], str):
-            buff.writelines(value)
-        else:
-            raise TypeError('Invalid input')
-        objct = buff.getvalue()
-    elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
-        objct = BytesIO()
-        fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
-        value.save(objct, fmt)
-        objct.seek(0)
-        if content_type is None:
-            content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
+@write_as.register(eq=csv)
+@write_as.register(eq=csv.writer)
+def _(value, key=None, content_type=None, **kwargs):
+    buff = StringIO()
+    writer = csv.writer(buff, **kwargs)
+    for row in value:
+        writer.writerow(row)
+    return {"value": buff.getvalue(),
+            "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
-def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
-    p = '' if prefix is None else prefix
-    s = '' if suffix is None else suffix
-    if o_type == str:
-        return (p + value + s).encode(encoding), 'text/plain'
-    elif o_type == dict:
-        return (p + json.dumps(value, cls=utils.JSONEncoder) + s).encode(encoding), 'text/plain'
-    elif isinstance(o_type, ModuleType) and o_type.__name__ == 'PIL.Image':
-        objct = BytesIO()
-        fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
-        value.save(objct, fmt)
-        objct.seek(0)
-        return objct.getvalue(), __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
-    else:
-        raise TypeError('Unhandled type')
+def __get_pillow_format(value, content_type, key, **kwargs):
+    content_type = __initialize_content_type(content_type, key, value.get_format_mimetype())
+    format = kwargs.get("format", value.format)
+    if format is None:
+        format = __content_type_to_pillow_format.get(content_type, "PNG")
+    return content_type, format
 
 
+@write_as.register(module_name="PIL.Image")
+def _(value, key=None, content_type=None, **kwargs):
+    content_type, format = __get_pillow_format(value, content_type, key, **kwargs)
+    objct = BytesIO()
+    value.save(objct, value.format)
+    objct.seek(0)
+    return {"value": objct.getvalue(),
+            "content_type": content_type}
+
+
+@larrydispatch
 def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
           content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-          storage_class=None, tags=None, **params):
+          storage_class=None, tags=None, **kwargs):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -703,118 +637,110 @@ def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=N
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The URI of the object written to S3
     """
+    pass
+
+
+@write.register(type=Mapping)
+@write.register(type=json)
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    return write_as(value, dict, *location, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+                    content_type=content_type, content_encoding=content_encoding,
+                    content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                    storage_class=storage_class, tags=tags, **kwargs)
+
+
+@write.register(type=str)
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    return write_as(value, str, *location, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+                    content_type=content_type, content_encoding=content_encoding,
+                    content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                    storage_class=storage_class, tags=tags, **kwargs)
+
+
+@write.register(type=StringIO)
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    extension = key.split('.')[-1]
-    # JSON
-    if isinstance(value, Mapping):
-        return write_as(value, dict, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                        content_type=content_type, content_encoding=content_encoding,
-                        content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                        storage_class=storage_class, tags=tags)
-    # Text
-    elif isinstance(value, str):
-        return write_as(value, str, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                        content_type=content_type, content_encoding=content_encoding,
-                        content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                        storage_class=storage_class, tags=tags)
+    return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
 
-    # List
-    # TODO: Handle iterables
-    elif isinstance(value, list):
-        if content_type is None:
-            content_type = __extension_types.get(extension, 'text/plain')
-        buff = StringIO()
-        for row in value:
-            if isinstance(row, Mapping):
-                buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
-            else:
-                buff.write(str(row) + newline)
-        return __write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-
-    elif isinstance(value, StringIO):
-        return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-    elif isinstance(value, BytesIO):
-        value.seek(0)
-        return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-    elif value is None:
-        return __write('', bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-
-    # primarily for Pillow images
-    elif hasattr(value, 'save') and callable(getattr(value, 'save', None)):
-        try:
-            # Retrieve the content type based on whatever data we have available
-            if content_type is None:
-                content_type = __extension_types.get(extension,
-                                                     __extension_types.get(params.get('format', '').lower(), 'image'))
-
-            # Confirm that a format has been provided, else try to infer it or default to PNG
-            if params.get('format') is None:
-                if hasattr(value, 'format') and value.format is not None:
-                    params['format'] = value.format
-                elif content_type in __content_type_to_pillow_format.keys():
-                    params['format'] = __content_type_to_pillow_format[content_type]
-                else:
-                    params['format'] = 'PNG'
-
-            objct = BytesIO()
-            value.save(objct, **params)
-            objct.seek(0)
-            return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                           content_encoding=content_encoding, content_language=content_language,
-                           content_length=content_length,
-                           metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
-        except Exception as e:
-            pass
-
-    # primarily for numpy arrays
-    elif hasattr(value, 'tofile') and callable(getattr(value, 'tofile', None)):
-        try:
-            with tempfile.TemporaryFile() as fp:
-                value.tofile(fp, **params)
-                fp.seek(0)
-                return upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                              content_encoding=content_encoding, content_language=content_language,
-                              content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                              tags=tags)
-        except Exception as e:
-            pass
-
-    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+@write.register(type=BytesIO)
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    value.seek(0)
+    return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                    content_encoding=content_encoding, content_language=content_language,
                    content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
                    tags=tags)
 
 
-def _array_to_string(row, delimiter, indices=None):
-    if indices is None:
-        indices = range(len(row))
-    line = ''
-    for x in indices:
-        line = str(row[x]) if x == 0 else line + delimiter + str(row[x])
-    return line
-
-
-def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
-                    columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-                    content_length=None, metadata=None, sse=None, storage_class=None, tags=None):
-    warnings.warn("Use write_as(row, csv, ...)", DeprecationWarning)
+@write.register(type=type(None))
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                    delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
-                    content_encoding=content_encoding, content_language=content_language, content_length=content_length,
-                    metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
+    return __write('', bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
+
+
+@write.register(type=list)
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    content_type = __initialize_content_type(content_type, key, "text/plain")
+    buff = StringIO()
+    for row in value:
+        if isinstance(row, Mapping):
+            buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
+        else:
+            buff.write(str(row) + newline)
+    return __write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                   tags=tags)
+
+
+@write.register(class_name="PngImageFile")
+@write.register(class_name="JpegImageFile")
+# TODO: Add the rest; better option?
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    content_type, format = __get_pillow_format(value, content_type, key, **kwargs)
+    objct = BytesIO()
+    value.save(objct, format)
+    objct.seek(0)
+    return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                   content_encoding=content_encoding, content_language=content_language,
+                   content_length=content_length,
+                   metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
+
+
+@write.register(class_name="ndarray")
+def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    with tempfile.TemporaryFile() as fp:
+        value.tofile(fp, **kwargs)
+        fp.seek(0)
+        return upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                      content_encoding=content_encoding, content_language=content_language,
+                      content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                      tags=tags)
 
 
 def __append(content, bucket=None, key=None):
@@ -852,6 +778,23 @@ def __append(content, bucket=None, key=None):
         'Grants': grants,
         'Owner': owner
     })
+
+
+def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
+    p = '' if prefix is None else prefix
+    s = '' if suffix is None else suffix
+    if o_type == str:
+        return (p + value + s).encode(encoding), 'text/plain'
+    elif o_type == dict:
+        return (p + json.dumps(value, cls=utils.JSONEncoder) + s).encode(encoding), 'text/plain'
+    elif isinstance(o_type, ModuleType) and o_type.__name__ == 'PIL.Image':
+        objct = BytesIO()
+        fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
+        value.save(objct, fmt)
+        objct.seek(0)
+        return objct.getvalue(), __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
+    else:
+        raise TypeError('Unhandled type')
 
 
 def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8'):
@@ -1550,6 +1493,17 @@ def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return read_as([str], bucket=bucket, key=key, uri=uri,
                    encoding=encoding, newline=newline)
+
+
+def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
+                    columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
+                    content_length=None, metadata=None, sse=None, storage_class=None, tags=None):
+    warnings.warn("Use write_as(row, csv, ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+                    delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
+                    content_encoding=content_encoding, content_language=content_language, content_length=content_length,
+                    metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
 
 
 def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
