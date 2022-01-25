@@ -106,7 +106,7 @@ def get_if_exists(name):
 
 
 def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=None, memory_size=None, publish=True,
-           description=None, layers=None):
+           description=None, layers=None, await_active=False):
     """
     Creates a Lambda function from the provided deployment package.
     :param name: The name of the Lambda function.
@@ -121,6 +121,7 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
     :param publish: Set to true to publish the first version of the function during creation.
     :param description: A description of the function.
     :param layers: A list of function layer ARNs (including version) to add to the function's execution environment.
+    :param await_active: If true, it will wait for the function active to complete before returning
     :return: An object representing the configuration of the created Lambda
     """
     params = {
@@ -145,7 +146,11 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
         params['MemorySize'] = memory_size
     if layers:
         params['Layers'] = layers
-    return Lambda.from_create(client.create_function(**params))
+    lmbda = Lambda.from_create(client.create_function(**params))
+    if await_active:
+        waiter = client.get_waiter('function_active')
+        waiter.wait(FunctionName=name)
+    return lmbda
 
 
 def generate_code_from_function(handler,
@@ -281,7 +286,7 @@ def package_function(function,
 
 
 def create_or_update(name, package=None, handler=None, role=None, runtime=None, timeout=None, memory_size=None,
-                     publish=True, description=None, layers=None):
+                     publish=True, description=None, layers=None, await_ready=False):
     """
     Creates or updates a Lambda function with the provided deployment package or configuration.
     :param name: The name of the Lambda function.
@@ -296,6 +301,7 @@ def create_or_update(name, package=None, handler=None, role=None, runtime=None, 
     :param publish: Set to true to publish the first version of the function during creation.
     :param description: A description of the function.
     :param layers: A list of function layer ARNs (including version) to add to the function's execution environment.
+    :param await_ready: If true, it will wait for the to be ready for use before returning
     :return: An object representing the configuration of the Lambda
     """
     # TODO: Add create_role=True parameter that will generate a service role with the same name
@@ -303,20 +309,20 @@ def create_or_update(name, package=None, handler=None, role=None, runtime=None, 
     existing = get_if_exists(name)
     if existing:
         if package is not None:
-            update_code(name, package, publish=publish)
+            update_code(name, package, publish=publish, await_updated=True)
         if not (handler is None and role is None and runtime is None and timeout is None and memory_size is None and
                 layers is None):
             update_config(name, handler=handler, role=role, runtime=runtime, timeout=timeout, memory_size=memory_size,
-                          layers=layers)
+                          layers=layers, await_updated=await_ready)
         return existing
     else:
         if runtime is None:
             runtime = 'python3.8'
         return create(name, package, handler, role, runtime=runtime, timeout=timeout, memory_size=memory_size,
-                      publish=publish, description=description, layers=layers)
+                      publish=publish, description=description, layers=layers, await_active=await_ready)
 
 
-def update_code(name, package, publish=True, dry_run=False):
+def update_code(name, package, publish=True, dry_run=False, await_updated=False):
     """
     Updates a Lambda code with the provided code.
     :param name: The name of the Lambda function.
@@ -324,6 +330,7 @@ def update_code(name, package, publish=True, dry_run=False):
     :param publish: Set to true to publish a new version of the function after updating the code.
     :param dry_run: Set to true to validate the request parameters and access permissions without modifying the
     function code.
+    :param await_updated: If true, it will wait for the function update to complete before returning
     :return: An object representing the configuration of the Lambda
     """
     params = larry.core.map_parameters(locals(), {
@@ -340,10 +347,15 @@ def update_code(name, package, publish=True, dry_run=False):
         params['S3Bucket'] = bucket
         params['S3Key'] = key
 
-    return Lambda.from_create(client.update_function_code(**params))
+    lmbda = Lambda.from_create(client.update_function_code(**params))
+    if await_updated:
+        waiter = client.get_waiter('function_updated')
+        waiter.wait(FunctionName=name)
+    return lmbda
 
 
-def update_config(name, handler=None, role=None, runtime='python3.8', timeout=None, memory_size=None, layers=None):
+def update_config(name, handler=None, role=None, runtime='python3.8', timeout=None, memory_size=None, layers=None,
+                  await_updated=False):
     """
     Modify the version-specific settings of a Lambda function.
     :param name: The name of the Lambda function.
@@ -355,6 +367,7 @@ def update_config(name, handler=None, role=None, runtime='python3.8', timeout=No
     :param memory_size:  The amount of memory that your function has access to. Increasing the function's memory also
     increases its CPU allocation. The default value is 128 MB. The value must be a multiple of 64 MB.
     :param layers: A list of function layer ARNs (including version) to add to the function's execution environment.
+    :param await_updated: If true, it will wait for the function update to complete before returning
     :return: An object representing the configuration of the Lambda
     """
     config_params = larry.core.map_parameters(locals(), {
@@ -366,7 +379,11 @@ def update_config(name, handler=None, role=None, runtime='python3.8', timeout=No
         'memory_size': 'MemorySize',
         'layers': 'Layers'
     })
-    return Lambda.from_create(client.update_function_configuration(**config_params))
+    lmbda = Lambda.from_create(client.update_function_configuration(**config_params))
+    if await_updated:
+        waiter = client.get_waiter('function_updated')
+        waiter.wait(FunctionName=name)
+    return lmbda
 
 
 def delete(name):
