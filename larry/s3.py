@@ -13,7 +13,7 @@ import tempfile
 from collections.abc import Mapping
 import warnings
 import larry.core
-from larry.utils import larrydispatch, currydispatch
+from larry.utils.dispatch import larrydispatch, currydispatch
 from functools import singledispatch
 from larry import utils
 from larry import sts
@@ -370,8 +370,8 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
     raise TypeError("Unsupported type")
 
 
-@read_as.register(module_name="numpy")
-@read_as.register(type_name="ndarray")
+@read_as.register_module_name("numpy")
+@read_as.register_type_name("ndarray")
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     try:
@@ -385,8 +385,8 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
         raise ex
 
 
-@read_as.register(module_name="cv2")
-@read_as.register(callable_name="imread")
+@read_as.register_module_name("cv2")
+@read_as.register_callable_name("imread")
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     fp = None
@@ -404,8 +404,8 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
     return img
 
 
-@read_as.register(eq=json)
-@read_as.register(eq=dict)
+@read_as.register_eq(json)
+@read_as.register_eq(dict)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
@@ -420,22 +420,22 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
             raise ex
 
 
-@read_as.register(eq=str)
+@read_as.register_eq(str)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return objct.decode(encoding)
 
 
-@read_as.register(module_type="PIL.Image")
+@read_as.register_module_name("PIL.Image")
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return type_.open(BytesIO(objct))
 
 
-@read_as.register(eq=[dict])
-@read_as.register(eq=[json])
+@read_as.register_eq([dict])
+@read_as.register_eq([json])
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
@@ -446,7 +446,7 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
         return [json.loads(line) for line in lines if len(line) > 0]
 
 
-@read_as.register(eq=[str])
+@read_as.register_eq([str])
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
@@ -454,15 +454,15 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
     return [line for line in lines if len(line) > 0]
 
 
-@read_as.register(eq=csv)
-@read_as.register(eq=csv.reader)
+@read_as.register_eq(csv)
+@read_as.register_eq(csv.reader)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return csv.reader(StringIO(objct), **kwargs)
 
 
-@read_as.register(eq=csv.DictReader)
+@read_as.register_eq(csv.DictReader)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
@@ -540,8 +540,8 @@ def __initialize_content_type(content_type, key, default=None):
     return content_type
 
 
-@write_as.register(module_name="cv2")
-@write_as.register(callable_name="imwrite")
+@write_as.register_module_name("cv2")
+@write_as.register_callable_name("imwrite")
 def _(value, type_, key, content_type=None, **kwargs):
     suffix = os.path.splitext(key)[1]
     content_type = __initialize_content_type(content_type, key, "image/png")
@@ -560,20 +560,20 @@ def _(value, type_, key, content_type=None, **kwargs):
     return {"value": result, "content_type": content_type}
 
 
-@write_as.register(eq="str")
+@write_as.register_eq("str")
 def _(value, key=None, content_type=None, **kwargs):
     return {"value": value, "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
-@write_as.register(eq=dict)
-@write_as.register(eq=json)
+@write_as.register_eq(dict)
+@write_as.register_eq(json)
 def _(value, key=None, content_type=None, **kwargs):
     return {"value": json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs),
             "content_type": __initialize_content_type(content_type, key, "application/json")}
 
 
-@write_as.register(eq=[dict])
-@write_as.register(eq=[json])
+@write_as.register_eq([dict])
+@write_as.register_eq([json])
 def _(value, key=None, content_type=None, **kwargs):
     buff = StringIO()
     for row in value:
@@ -582,8 +582,8 @@ def _(value, key=None, content_type=None, **kwargs):
             "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
-@write_as.register(eq=csv)
-@write_as.register(eq=csv.writer)
+@write_as.register_eq(csv)
+@write_as.register_eq(csv.writer)
 def _(value, key=None, content_type=None, **kwargs):
     buff = StringIO()
     writer = csv.writer(buff, **kwargs)
@@ -601,7 +601,7 @@ def __get_pillow_format(value, content_type, key, **kwargs):
     return content_type, format
 
 
-@write_as.register(module_name="PIL.Image")
+@write_as.register_module_name("PIL.Image")
 def _(value, key=None, content_type=None, **kwargs):
     content_type, format = __get_pillow_format(value, content_type, key, **kwargs)
     objct = BytesIO()
@@ -637,11 +637,12 @@ def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=N
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The URI of the object written to S3
     """
+    # TODO: default behavior? Assume it's bytes?
     pass
 
 
-@write.register(type=Mapping)
-@write.register(type=json)
+@write.register(Mapping)
+@write.register(json)
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -651,7 +652,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                     storage_class=storage_class, tags=tags, **kwargs)
 
 
-@write.register(type=str)
+@write.register(str)
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -661,7 +662,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                     storage_class=storage_class, tags=tags, **kwargs)
 
 
-@write.register(type=StringIO)
+@write.register(StringIO)
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -671,7 +672,8 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                    content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
                    tags=tags)
 
-@write.register(type=BytesIO)
+
+@write.register(BytesIO)
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -683,7 +685,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                    tags=tags)
 
 
-@write.register(type=type(None))
+@write.register(type(None))
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -694,7 +696,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                    tags=tags)
 
 
-@write.register(type=list)
+@write.register(list)
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -712,8 +714,8 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                    tags=tags)
 
 
-@write.register(class_name="PngImageFile")
-@write.register(class_name="JpegImageFile")
+@write.register_class_name("PngImageFile")
+@write.register_class_name("JpegImageFile")
 # TODO: Add the rest; better option?
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
@@ -729,7 +731,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
                    metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
 
 
-@write.register(class_name="ndarray")
+@write.register_class_name("ndarray")
 def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
