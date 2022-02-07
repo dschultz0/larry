@@ -8,7 +8,8 @@ from io import BytesIO
 import json
 import builtins
 import dis
-from collections import Mapping, UserDict
+from collections.abc import Mapping
+from collections import UserDict
 import base64
 from botocore.exceptions import ClientError
 import tempfile
