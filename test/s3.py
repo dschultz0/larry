@@ -4,13 +4,15 @@ from larry.types import Box
 from larry.utils import json_dumps
 import datetime
 import numpy as np
+from moto import mock_s3
+
 
 # S3 testing objects
 SIMPLE_DICT = {
     'a': {'key': 'value'},
     'b': ['a', 'b', 'c'],
     '1': 15,
-    'box': Box.from_coords([3,4,5,6]),
+    'box': Box([3,4,5,6]),
     'date': datetime.datetime.now()
 }
 SIMPLE_LIST_OF_DICTS = [
@@ -30,22 +32,29 @@ PATH_PREFIX = 's3/'
 URI_PREFIX = 's3://{}/{}'.format(BUCKET, PATH_PREFIX)
 
 
+@mock_s3
 class S3Tests(unittest.TestCase):
 
+    def setUp(self):
+        lry.set_session()
+        lry.s3.create_bucket(BUCKET)
+        lry.s3.write("", BUCKET, KEY)
+
     def test_obj(self):
-        o = lry.s3.obj(BUCKET, KEY)
+        o = lry.s3.Object(BUCKET, KEY)
         o.load()
-        o = lry.s3.obj(URI)
+        o = lry.s3.Object(URI)
         o.load()
-        o = lry.s3.obj(bucket=BUCKET, key=KEY)
+        o = lry.s3.Object(bucket=BUCKET, key=KEY)
         o.load()
-        o = lry.s3.obj(uri=URI)
+        o = lry.s3.Object(uri=URI)
         o.load()
-        o = lry.s3.obj(BUCKET, KEY[:-1])
+        o = lry.s3.Object(BUCKET, KEY[:-1])
         with self.assertRaises(lry.ClientError) as context:
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
+    @mock_s3
     def test_delete(self):
         uri = lry.s3.fetch(IMAGE_URL, BUCKET, PATH_PREFIX + 'delete_test.jpg')
         o = lry.s3.obj(uri)
@@ -64,6 +73,7 @@ class S3Tests(unittest.TestCase):
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
+    @mock_s3
     def test_delete_multiple(self):
         uris = [lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete1.txt'),
                 lry.s3.write(SIMPLE_STRING, BUCKET, PATH_PREFIX + 'delete2.txt'),
@@ -100,12 +110,14 @@ class S3Tests(unittest.TestCase):
             o.load()
         self.assertEqual('Not Found', context.exception.response['Error']['Message'])
 
+    @mock_s3
     def test_get_size(self):
         self.assertGreater(lry.s3.size(URI), 10000)
         self.assertGreater(lry.s3.size(uri=URI), 10000)
         self.assertGreater(lry.s3.size(BUCKET, KEY), 10000)
         self.assertGreater(lry.s3.size(bucket=BUCKET, key=KEY), 10000)
 
+    @mock_s3
     def test_readwrite_dict(self):
         key = PATH_PREFIX + 'dict.json'
         uri = lry.s3.compose_uri(BUCKET, key)
@@ -122,6 +134,7 @@ class S3Tests(unittest.TestCase):
         self.assertEqual(json_dumps(lry.s3.read_dict(uri=uri)), json_dumps(SIMPLE_DICT))
         lry.s3.delete(dict_uri)
 
+    @mock_s3
     def test_readwrite_list_of_dict(self):
         def list_dump(l):
             return [json_dumps(i) for i in l]
@@ -140,6 +153,7 @@ class S3Tests(unittest.TestCase):
         self.assertEqual(list_dump(lry.s3.read_list_of_dict(uri=uri)), list_dump(SIMPLE_LIST_OF_DICTS))
         lry.s3.delete(dictlist_uri)
 
+    @mock_s3
     def test_readwrite_list(self):
         key = PATH_PREFIX + 'list.txt'
         uri = lry.s3.compose_uri(BUCKET, key)
@@ -156,6 +170,7 @@ class S3Tests(unittest.TestCase):
         self.assertEqual(lry.s3.read_list_of_str(uri=uri), SIMPLE_LIST)
         lry.s3.delete(list_uri)
 
+    @mock_s3
     def test_readwrite_string(self):
         key = PATH_PREFIX + 'string.txt'
         uri = lry.s3.compose_uri(BUCKET, key)
@@ -172,6 +187,7 @@ class S3Tests(unittest.TestCase):
         self.assertEqual(lry.s3.read_str(uri=uri), SIMPLE_STRING)
         lry.s3.delete(string_uri)
 
+    @mock_s3
     def test_rename(self):
         key1 = PATH_PREFIX + 'string1.txt'
         key2 = PATH_PREFIX + 'string2.txt'
@@ -186,6 +202,7 @@ class S3Tests(unittest.TestCase):
         self.assertEqual(lry.s3.read_str(uri2), SIMPLE_STRING)
         lry.s3.delete(uri2)
 
+    @mock_s3
     def test_copy(self):
         key1 = PATH_PREFIX + 'string1.txt'
         key2 = PATH_PREFIX + 'string2.txt'
@@ -201,6 +218,7 @@ class S3Tests(unittest.TestCase):
         lry.s3.delete(uri2)
         lry.s3.delete(uri1)
 
+    @mock_s3
     def test_exists(self):
         self.assertTrue(lry.s3.exists(BUCKET, KEY))
         self.assertFalse(lry.s3.exists(BUCKET, KEY[:-1]))
@@ -211,6 +229,7 @@ class S3Tests(unittest.TestCase):
         self.assertTrue(lry.s3.exists(uri=URI))
         self.assertFalse(lry.s3.exists(uri=URI[:-1]))
 
+    @mock_s3
     def test_fetch(self):
         key = PATH_PREFIX + 'fetched.jpg'
         uri = lry.s3.compose_uri(BUCKET, key)
@@ -227,6 +246,7 @@ class S3Tests(unittest.TestCase):
         self.assertTrue(lry.s3.exists(uri))
         lry.s3.delete(image_uri)
 
+    @mock_s3
     def test_readwrite_numpy(self):
         key = PATH_PREFIX + 'numpy.npy'
         uri = lry.s3.compose_uri(BUCKET, key)
@@ -247,6 +267,7 @@ class S3Tests(unittest.TestCase):
                                       lry.s3.read_as(lry.types.TYPE_NP_ARRAY, uri=uri).reshape(NUMPY_SHAPE))
         lry.s3.delete(numpy_uri)
 
+    @mock_s3
     def test_readwrite_pillow(self):
         key = PATH_PREFIX + 'pillow.jpg'
         uri = lry.s3.compose_uri(BUCKET, key)
@@ -254,6 +275,7 @@ class S3Tests(unittest.TestCase):
         w_uri = lry.s3.write(img, BUCKET, key)
         self.assertTrue(lry.s3.exists(BUCKET, key))
 
+    @mock_s3
     def test_createdelete_bucket(self):
         bucket1 = 'larry-testing-create1'
         bucket2 = 'larry-testing-create2'

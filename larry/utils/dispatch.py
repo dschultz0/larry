@@ -1,8 +1,10 @@
+from collections.abc import Hashable
 from weakref import WeakKeyDictionary
 from abc import get_cache_token
 from functools import update_wrapper
 from types import MappingProxyType, ModuleType
 from functools import singledispatch
+import inspect
 
 
 def larrydispatch(func):
@@ -29,8 +31,10 @@ def larrydispatch(func):
                 impl = module_name_registry[value.__name__]
             elif callable(value) and value.__name__ in callable_name_registry:
                 impl = callable_name_registry[value.__name__]
-            elif value in eq_registry:
+            elif isinstance(value, Hashable) and value in eq_registry:
                 impl = eq_registry[value]
+            elif isinstance(value, list) and tuple(value) in eq_registry:
+                impl = eq_registry[tuple(value)]
             elif value.__class__.__name__ in class_name_registry:
                 impl = class_name_registry[value.__class__.__name__]
             elif value.__name__ in type_name_registry:
@@ -75,6 +79,9 @@ def larrydispatch(func):
     def register_eq(cls, func=None):
         if func is None:
             return lambda f: register_eq(cls, f)
+        # TODO: Add checks for hashable values
+        if isinstance(cls, list):
+            cls = tuple(cls)
         eq_registry[cls] = func
         return func
 
@@ -90,7 +97,7 @@ def larrydispatch(func):
                             '1 positional argument'.format(funcname))
         return dispatch(args[0])(*args, **kw)
 
-    funcname = getattr(func, '__name__', 'singledispatch function')
+    funcname = getattr(func, '__name__', 'larrydispatch function')
     wrapper.register_module_name = register_module_name
     wrapper.register_type_name = register_type_name
     wrapper.register_callable_name = register_callable_name
@@ -108,15 +115,94 @@ def larrydispatch(func):
     update_wrapper(wrapper, func)
     return wrapper
 
-"""
-def currydispatch(func):
-    module_name_registry = {}
-    callable_name_registry = {}
-    type_name_registry = {}
-    class_name_registry = {}
-    eq_registry = {}
-    sd = singledispatch(func)
-    dispatch_cache = WeakKeyDictionary()
-    def ns(): pass
-    ns.cache_token = None
-"""
+
+def currydispatch(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled dispatch'), pre_curry=None):
+
+    def decorate(func):
+        spec = inspect.getfullargspec(func)
+
+        @larrydispatch
+        def curry(*args, **kwargs):
+            if throw_if_unmatched:
+                raise throw_if_unmatched
+            return {}
+
+        def register_module_name(name: str, fnc=None):
+            if fnc is None:
+                return lambda f: register_module_name(name, f)
+            curry.register_module_name(name, fnc)
+            return func
+
+        def register_type_name(name, fnc=None):
+            if fnc is None:
+                return lambda f: register_type_name(name, f)
+            curry.register_type_name(name, fnc)
+            return fnc
+
+        def register_callable_name(name, fnc=None):
+            if fnc is None:
+                return lambda f: register_callable_name(name, f)
+            curry.register_callable_name(name, fnc)
+            return fnc
+
+        def register_class_name(name, fnc=None):
+            if fnc is None:
+                return lambda f: register_class_name(name, f)
+            curry.register_class_name(name, fnc)
+            return fnc
+
+        def register_eq(name, fnc=None):
+            if fnc is None:
+                return lambda f: register_eq(name, f)
+            curry.register_eq(name, fnc)
+            return fnc
+
+        def register(name, fnc=None):
+            if fnc is None:
+                return lambda f: register(name, f)
+            curry.register(name, fnc)
+            return fnc
+
+        def wrapper(*args, **kw):
+            if not args or len(args) <= dispatch_index:
+                raise TypeError(f'{funcname} requires at least {dispatch_index+1} positional argument')
+            args = list(args)
+            if pre_curry:
+                curried_values = pre_curry(*args, **kw)
+                kw.update(curried_values)
+            cf = curry.dispatch(args[dispatch_index])
+            cf_spec = inspect.getfullargspec(cf)
+            print(spec)
+            print(args)
+            print(kw)
+            print(cf_spec)
+            curried_values = cf(*args, **kw)
+            kw.update(curried_values)
+            print(kw)
+            positional_args = spec.args[:len(args)]
+            print(positional_args)
+            for i, arg in enumerate(positional_args):
+                if arg in kw:
+                    args[i] = kw.pop(arg)
+            print(args)
+            print(kw)
+            return func(*args, **kw)
+
+        funcname = getattr(func, '__name__', 'currydispatch function')
+        wrapper.register_module_name = register_module_name
+        wrapper.register_type_name = register_type_name
+        wrapper.register_callable_name = register_callable_name
+        wrapper.register_class_name = register_class_name
+        wrapper.register_eq = register_eq
+        wrapper.register = register
+        wrapper.module_name_registry = curry.module_name_registry
+        wrapper.callable_name_registry = curry.callable_name_registry
+        wrapper.type_name_registry = curry.type_name_registry
+        wrapper.class_name_registry = curry.class_name_registry
+        wrapper.eq_registry = curry.eq_registry
+        wrapper.registry = curry.registry
+        wrapper._clear_cache = curry._clear_cache
+        update_wrapper(wrapper, func)
+        return wrapper
+
+    return decorate

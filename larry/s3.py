@@ -499,7 +499,7 @@ def __retrieve_curried_location(value, type_, *location, bucket=None, key=None, 
     return {"bucket": bucket, "key": key, "uri": uri}
 
 
-@currydispatch(1, TypeError('Unhandled type'), pre_curry=__retrieve_curried_location)
+@currydispatch(1, pre_curry=__retrieve_curried_location)
 def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
              content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
              storage_class=None, tags=None, **kwargs):
@@ -542,7 +542,7 @@ def __initialize_content_type(content_type, key, default=None):
 
 @write_as.register_module_name("cv2")
 @write_as.register_callable_name("imwrite")
-def _(value, type_, key, content_type=None, **kwargs):
+def _(value, type_, key=None, content_type=None, **kwargs):
     suffix = os.path.splitext(key)[1]
     content_type = __initialize_content_type(content_type, key, "image/png")
     handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
@@ -561,20 +561,20 @@ def _(value, type_, key, content_type=None, **kwargs):
 
 
 @write_as.register_eq("str")
-def _(value, key=None, content_type=None, **kwargs):
+def _(value, type_, key=None, content_type=None, **kwargs):
     return {"value": value, "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
 @write_as.register_eq(dict)
 @write_as.register_eq(json)
-def _(value, key=None, content_type=None, **kwargs):
+def _(value, type_, key=None, content_type=None, **kwargs):
     return {"value": json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs),
             "content_type": __initialize_content_type(content_type, key, "application/json")}
 
 
 @write_as.register_eq([dict])
 @write_as.register_eq([json])
-def _(value, key=None, content_type=None, **kwargs):
+def _(value, type_, key=None, content_type=None, **kwargs):
     buff = StringIO()
     for row in value:
         buff.write(json.dumps(row, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs) + kwargs.get("newline", "\n"))
@@ -584,7 +584,7 @@ def _(value, key=None, content_type=None, **kwargs):
 
 @write_as.register_eq(csv)
 @write_as.register_eq(csv.writer)
-def _(value, key=None, content_type=None, **kwargs):
+def _(value, type_, key=None, content_type=None, **kwargs):
     buff = StringIO()
     writer = csv.writer(buff, **kwargs)
     for row in value:
@@ -593,7 +593,7 @@ def _(value, key=None, content_type=None, **kwargs):
             "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
-def __get_pillow_format(value, content_type, key, **kwargs):
+def __get_pillow_format(value, type_, content_type, key, **kwargs):
     content_type = __initialize_content_type(content_type, key, value.get_format_mimetype())
     format = kwargs.get("format", value.format)
     if format is None:
@@ -602,7 +602,7 @@ def __get_pillow_format(value, content_type, key, **kwargs):
 
 
 @write_as.register_module_name("PIL.Image")
-def _(value, key=None, content_type=None, **kwargs):
+def _(value, type_, key=None, content_type=None, **kwargs):
     content_type, format = __get_pillow_format(value, content_type, key, **kwargs)
     objct = BytesIO()
     value.save(objct, value.format)
