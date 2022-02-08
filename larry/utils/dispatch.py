@@ -26,22 +26,26 @@ def larrydispatch(func):
                 ns.cache_token = current_token
         try:
             impl = dispatch_cache[value]
-        except KeyError:
+        except (TypeError, KeyError):
             if isinstance(value, ModuleType) and value.__name__ in module_name_registry:
                 impl = module_name_registry[value.__name__]
             elif callable(value) and value.__name__ in callable_name_registry:
                 impl = callable_name_registry[value.__name__]
             elif isinstance(value, Hashable) and value in eq_registry:
                 impl = eq_registry[value]
-            elif isinstance(value, list) and tuple(value) in eq_registry:
+            elif isinstance(value, list) and all(isinstance(v, Hashable) for v in value) and tuple(value) in eq_registry:
                 impl = eq_registry[tuple(value)]
             elif value.__class__.__name__ in class_name_registry:
                 impl = class_name_registry[value.__class__.__name__]
-            elif value.__name__ in type_name_registry:
-                impl = callable_name_registry[value.__name__]
+            elif hasattr(value, "__name__") and value.__name__ in type_name_registry:
+                impl = type_name_registry[value.__name__]
             else:
                 impl = sd.dispatch(value.__class__)
+        try:
             dispatch_cache[value] = impl
+        except TypeError:
+            # Various value types can't be cached using weak refs
+            pass
         return impl
 
     def register_module_name(name: str, func=None):
@@ -111,12 +115,13 @@ def larrydispatch(func):
     wrapper.class_name_registry = MappingProxyType(class_name_registry)
     wrapper.eq_registry = MappingProxyType(eq_registry)
     wrapper.registry = sd.registry
+    # TODO: Clear both caches
     wrapper._clear_cache = dispatch_cache.clear
     update_wrapper(wrapper, func)
     return wrapper
 
 
-def currydispatch(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled dispatch'), pre_curry=None):
+def dispatchcurry(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled dispatch'), pre_curry=None):
 
     def decorate(func):
         spec = inspect.getfullargspec(func)
@@ -163,29 +168,41 @@ def currydispatch(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled disp
             curry.register(name, fnc)
             return fnc
 
-        def wrapper(*args, **kw):
-            if not args or len(args) <= dispatch_index:
-                raise TypeError(f'{funcname} requires at least {dispatch_index+1} positional argument')
+        def normalize_args(full_spec, *args, **kwargs):
             args = list(args)
-            if pre_curry:
-                curried_values = pre_curry(*args, **kw)
-                kw.update(curried_values)
-            cf = curry.dispatch(args[dispatch_index])
-            cf_spec = inspect.getfullargspec(cf)
-            print(spec)
-            print(args)
-            print(kw)
-            print(cf_spec)
-            curried_values = cf(*args, **kw)
-            kw.update(curried_values)
-            print(kw)
-            positional_args = spec.args[:len(args)]
-            print(positional_args)
+            kw = kwargs.copy()
+            args = args[:len(full_spec.args)]
+            positional_args = full_spec.args[:len(args)]
             for i, arg in enumerate(positional_args):
                 if arg in kw:
                     args[i] = kw.pop(arg)
-            print(args)
-            print(kw)
+            return args, kw
+
+        def wrapper(*args, **kw):
+            if not args or len(args) <= dispatch_index:
+                raise TypeError(f'{funcname} requires at least {dispatch_index+1} positional argument')
+            if pre_curry:
+                curried_values = pre_curry(*args, **kw)
+                kw.update(curried_values)
+                args, kw = normalize_args(spec, *args, **kw)
+            cf = curry.dispatch(args[dispatch_index])
+            #print(dispatch_index)
+            #print(args[dispatch_index])
+            #print(cf)
+            cf_spec = inspect.getfullargspec(cf)
+            #print(spec)
+            #print(args)
+            #print(kw)
+            #print(cf_spec)
+            cf_args, cf_kw = normalize_args(cf_spec, *args, **kw)
+            #print(cf_args)
+            #print(cf_kw)
+            curried_values = cf(*cf_args, **cf_kw)
+            kw.update(curried_values)
+            #print(kw)
+            args, kw = normalize_args(spec, *args, **kw)
+            #print(args)
+            #print(kw)
             return func(*args, **kw)
 
         funcname = getattr(func, '__name__', 'currydispatch function')

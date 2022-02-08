@@ -13,14 +13,13 @@ import tempfile
 from collections.abc import Mapping
 import warnings
 import larry.core
-from larry.utils.dispatch import larrydispatch, currydispatch
+from larry.utils.dispatch import larrydispatch, dispatchcurry
 from functools import singledispatch
 from larry import utils
 from larry import sts
 from larry import ClientError
-from larry.core import ResourceWrapper, attach_exception_handler
-from urllib import parse
-from urllib import request
+from larry.core import ResourceWrapper, attach_exception_handler, supported_kwargs
+from urllib import parse, request
 from zipfile import ZipFile
 from enum import Enum
 
@@ -147,10 +146,16 @@ def _normalize_location(*location, uri: str = None, bucket: str = None, key: str
     if isinstance(key, list) and not allow_multiple:
         raise TypeError('You cannot provide a list of keys for this function')
 
-    if require_bucket and (bucket is None or len(bucket) == 0):
-        raise TypeError('A bucket must be provided')
-    if require_key and (key is None or len(key) == 0):
-        raise TypeError('A key must be provided')
+    if require_bucket:
+        if not isinstance(bucket, str):
+            raise TypeError(f"bucket must be of type 'str'")
+        if bucket is None or len(bucket) == 0:
+            raise TypeError('A bucket must be provided')
+    if require_key:
+        if not isinstance(key, str) and not isinstance(key, list):
+            raise TypeError("key must be of type 'str'")
+        if key is None or len(key) == 0:
+            raise TypeError('A key must be provided')
 
     return bucket, key, uri
 
@@ -234,6 +239,13 @@ class Object(ResourceWrapper):
     def uri(self):
         return join_uri(self.bucket_name, self.key)
 
+    @property
+    def bucket(self):
+        return Bucket(self.bucket_name)
+
+    def __repr__(self):
+        return f'Object(bucket="{self.bucket_name}", key="{self.key}")'
+
 
 class Bucket(ResourceWrapper):
     """
@@ -273,7 +285,7 @@ class Bucket(ResourceWrapper):
         """
         Returns the public URL of the bucket (assuming permissions have been set appropriately).
         """
-        return _bucket_url(self.bucket_name)
+        return _bucket_url(self.name)
 
     @property
     def website(self):
@@ -286,6 +298,9 @@ class Bucket(ResourceWrapper):
                 super().__init__(bucket.Website())
 
         return BucketWebsite(self)
+
+    def __repr__(self):
+        return f'Bucket("{self.bucket_name}")'
 
 
 def delete(*location, bucket=None, key=None, uri=None):
@@ -490,16 +505,17 @@ def __write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, 
     if tags:
         params['Tagging'] = parse.urlencode(tags) if isinstance(tags, Mapping) else tags
 
-    Object(bucket=bucket, key=key).put(**params)
-    return join_uri(bucket, key)
+    obj = Object(bucket=bucket, key=key)
+    obj.put(**params)
+    return obj
 
 
-def __retrieve_curried_location(value, type_, *location, bucket=None, key=None, uri=None):
+def __retrieve_curried_location(value, type_, *location, bucket=None, key=None, uri=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return {"bucket": bucket, "key": key, "uri": uri}
 
 
-@currydispatch(1, pre_curry=__retrieve_curried_location)
+@dispatchcurry(1, pre_curry=__retrieve_curried_location)
 def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
              content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
              storage_class=None, tags=None, **kwargs):
@@ -560,31 +576,42 @@ def _(value, type_, key=None, content_type=None, **kwargs):
     return {"value": result, "content_type": content_type}
 
 
-@write_as.register_eq("str")
-def _(value, type_, key=None, content_type=None, **kwargs):
+@write_as.register_eq(str)
+def _(value, key=None, content_type=None, **kwargs):
     return {"value": value, "content_type": __initialize_content_type(content_type, key, "text/plain")}
+
+
+@write_as.register_eq([str])
+def _(value, key=None, content_type=None, **kwargs):
+    buff = StringIO()
+    for row in value:
+        buff.write(row + kwargs.get("newline", "\n"))
+    return {"value": buff.getvalue(),
+            "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
 @write_as.register_eq(dict)
 @write_as.register_eq(json)
-def _(value, type_, key=None, content_type=None, **kwargs):
-    return {"value": json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs),
+def _(value, key=None, content_type=None, **kwargs):
+    kw = supported_kwargs(json.dumps, **kwargs)
+    return {"value": json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kw),
             "content_type": __initialize_content_type(content_type, key, "application/json")}
 
 
 @write_as.register_eq([dict])
 @write_as.register_eq([json])
-def _(value, type_, key=None, content_type=None, **kwargs):
+def _(value, key=None, content_type=None, **kwargs):
+    kw = kw = supported_kwargs(json.dumps, **kwargs)
     buff = StringIO()
     for row in value:
-        buff.write(json.dumps(row, cls=kwargs.get("cls", utils.JSONEncoder), **kwargs) + kwargs.get("newline", "\n"))
+        buff.write(json.dumps(row, cls=kwargs.get("cls", utils.JSONEncoder), **kw) + kwargs.get("newline", "\n"))
     return {"value": buff.getvalue(),
             "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
 @write_as.register_eq(csv)
 @write_as.register_eq(csv.writer)
-def _(value, type_, key=None, content_type=None, **kwargs):
+def _(value, key=None, content_type=None, **kwargs):
     buff = StringIO()
     writer = csv.writer(buff, **kwargs)
     for row in value:
@@ -593,7 +620,7 @@ def _(value, type_, key=None, content_type=None, **kwargs):
             "content_type": __initialize_content_type(content_type, key, "text/plain")}
 
 
-def __get_pillow_format(value, type_, content_type, key, **kwargs):
+def __get_pillow_format(value, content_type, key, **kwargs):
     content_type = __initialize_content_type(content_type, key, value.get_format_mimetype())
     format = kwargs.get("format", value.format)
     if format is None:
@@ -602,7 +629,7 @@ def __get_pillow_format(value, type_, content_type, key, **kwargs):
 
 
 @write_as.register_module_name("PIL.Image")
-def _(value, type_, key=None, content_type=None, **kwargs):
+def _(value, key=None, content_type=None, **kwargs):
     content_type, format = __get_pillow_format(value, content_type, key, **kwargs)
     objct = BytesIO()
     value.save(objct, value.format)
@@ -611,8 +638,17 @@ def _(value, type_, key=None, content_type=None, **kwargs):
             "content_type": content_type}
 
 
+@write_as.register_type_name("ndarray")
+def _(value, **kwargs):
+    kw = {k: v for k, v in kwargs.items() if k in ["sep", "format"]}
+    with tempfile.TemporaryFile() as fp:
+        value.tofile(fp, **kw)
+        fp.seek(0)
+        return {"value": fp.file.read()}
+
+
 @larrydispatch
-def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def write(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
           content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
           storage_class=None, tags=None, **kwargs):
     """
@@ -643,27 +679,27 @@ def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=N
 
 @write.register(Mapping)
 @write.register(json)
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
-    return write_as(value, dict, *location, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+    return write_as(value, dict, *location, bucket=bucket, key=key, uri=uri, acl=acl,
                     content_type=content_type, content_encoding=content_encoding,
                     content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
                     storage_class=storage_class, tags=tags, **kwargs)
 
 
 @write.register(str)
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
-    return write_as(value, str, *location, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+    return write_as(value, str, *location, bucket=bucket, key=key, uri=uri, acl=acl,
                     content_type=content_type, content_encoding=content_encoding,
                     content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
                     storage_class=storage_class, tags=tags, **kwargs)
 
 
 @write.register(StringIO)
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
@@ -674,7 +710,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
 
 
 @write.register(BytesIO)
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
@@ -686,7 +722,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
 
 
 @write.register(type(None))
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
@@ -697,17 +733,18 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
 
 
 @write.register(list)
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     content_type = __initialize_content_type(content_type, key, "text/plain")
+    kw = kw = supported_kwargs(json.dumps, **kwargs)
     buff = StringIO()
     for row in value:
         if isinstance(row, Mapping):
-            buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
+            buff.write(json.dumps(row, cls=utils.JSONEncoder, **kw) + kwargs.get("newline", "\n"))
         else:
-            buff.write(str(row) + newline)
+            buff.write(str(row) + kwargs.get("newline", "\n"))
     return __write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                    content_encoding=content_encoding, content_language=content_language,
                    content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
@@ -717,7 +754,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
 @write.register_class_name("PngImageFile")
 @write.register_class_name("JpegImageFile")
 # TODO: Add the rest; better option?
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
@@ -732,7 +769,7 @@ def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None,
 
 
 @write.register_class_name("ndarray")
-def _(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
@@ -1247,7 +1284,7 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
         objct.upload_file(file, **params)
     else:
         objct.upload_fileobj(file, **params)
-    return join_uri(bucket, key)
+    return objct
 
 
 def write_temp(value, prefix, acl=None, bucket_identifier=None, region=None,
@@ -1296,6 +1333,7 @@ def create_bucket(bucket, acl=ACL_PRIVATE, region=None):
     bucket_obj = Bucket(bucket=bucket)
     bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
     bucket_obj.wait_until_exists()
+    return bucket_obj
 
 
 def delete_bucket(bucket):
