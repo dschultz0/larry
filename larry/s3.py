@@ -14,7 +14,6 @@ from collections.abc import Mapping
 import warnings
 import larry.core
 from larry.utils.dispatch import larrydispatch, dispatchcurry
-from functools import singledispatch
 from larry import utils
 from larry import sts
 from larry import ClientError
@@ -333,7 +332,7 @@ def size(*location, bucket=None, key=None, uri=None):
     return Object(bucket=bucket, key=key).content_length
 
 
-def content_type(*location, bucket=None, key=None, uri=None):
+def get_content_type(*location, bucket=None, key=None, uri=None):
     """
     Returns the content type assigned to the object
 
@@ -678,7 +677,6 @@ def write(value, *location, bucket=None, key=None, uri=None, acl=None, content_t
 
 
 @write.register(Mapping)
-@write.register(json)
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, **kwargs):
@@ -738,7 +736,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
       storage_class=None, tags=None, **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     content_type = __initialize_content_type(content_type, key, "text/plain")
-    kw = kw = supported_kwargs(json.dumps, **kwargs)
+    kw = supported_kwargs(json.dumps, **kwargs)
     buff = StringIO()
     for row in value:
         if isinstance(row, Mapping):
@@ -782,7 +780,11 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
                       tags=tags)
 
 
-def __append(content, bucket=None, key=None):
+def __append(content, bucket=None, key=None, prefix=None, suffix=None, encoding=None):
+    """
+    Reads in an existing object, adds additional content, and then writes it back out with the same attributes
+    and ACLs.
+    """
     # load the object and build the parameters that will be used to rewrite it
     objct = Object(bucket, key)
     values = {
@@ -802,14 +804,21 @@ def __append(content, bucket=None, key=None):
         'sse': 'ServerSideEncryption',
         'storage_class': 'StorageClass',
     })
-    tags = objct.tags
-    if len(tags.keys()) > 0:
-        params['Tagging'] = parse.urlencode(tags)
+    if objct.tags:
+        params['Tagging'] = parse.urlencode(objct.tags)
 
     # get the current ACL
     acl = objct.Acl()
     grants = acl.grants
     owner = acl.owner
+
+    if prefix:
+        content = prefix + content
+    if suffix:
+        content = content + suffix
+
+    if isinstance(content, str) and encoding:
+        content = content.encode(encoding)
 
     body = objct.get()['Body'].read() + content
     objct.put(Body=body, **params)
@@ -817,6 +826,76 @@ def __append(content, bucket=None, key=None):
         'Grants': grants,
         'Owner': owner
     })
+
+
+@dispatchcurry(1, throw_if_unmatched=None, pre_curry=__retrieve_curried_location)
+def append_as(value, type_, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding="utf-8",
+              **kwargs):
+    """
+    Append content to the end of an s3 object. Assumes that the data should be treated as text in most cases.
+
+    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
+    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
+    multithreading or multi-user environment.
+
+    :param value: Data to write
+    :param type_: The data type to write the value using
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param prefix: Value to prepend to the value
+    :param suffix: Value to attach to the end of the value such as "\n"
+    :param encoding: Encoding to use when writing str to bytes
+    """
+    __append(value, bucket=bucket, key=key, prefix=prefix, suffix=suffix, encoding=encoding)
+
+
+@append_as.register_eq(str)
+def _(value):
+    return {"value": value}
+
+
+@append_as.register_eq(dict)
+@append_as.register_eq(json)
+def _(value, **kwargs):
+    kw = supported_kwargs(json.dumps, **kwargs)
+    value = json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kw)
+    return {"value": value}
+
+
+@larrydispatch
+def append(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding="utf-8", **kwargs):
+    """
+    Append content to the end of an s3 object. Assumes that the data should be treated as text in most cases.
+
+    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
+    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
+    multithreading or multi-user environment.
+
+    :param value: Data to write
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param prefix: Value to prepend to the value
+    :param suffix: Value to attach to the end of the value such as "\n"
+    :param encoding: Encoding to use when writing str to bytes
+    """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    __append(value, bucket=bucket, key=key, prefix=prefix, suffix=suffix)
+
+
+@append.register(str)
+def _(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding="utf-8", **kwargs):
+    append_as(value, str, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=encoding,
+              **kwargs)
+
+
+@append.register(Mapping)
+def _(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding="utf-8", **kwargs):
+    append_as(value, dict, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=encoding,
+              **kwargs)
 
 
 def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
@@ -836,23 +915,8 @@ def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, 
         raise TypeError('Unhandled type')
 
 
-def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8'):
-    """
-    Append content to the end of an s3 object. Assumes that the data should be treated as text in most cases.
+def append_old(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8'):
 
-    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
-    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
-    multi-threaded or multi-user environment.
-
-    :param value: Data to write
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param incl_newline: Indicates if a newline character should be appended to the value
-    :param newline: Newline character to append to the value
-    :param encoding: Encoding to use when writing str to bytes
-    """
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     # the append logic is designed around text based files so we'll convert int and float values to string first
     if isinstance(value, int) or isinstance(value, float):
@@ -896,7 +960,7 @@ def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True,
         __append(value, bucket=bucket, key=key)
 
 
-def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n',
+def append_as_old(value, o_type, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n',
               delimiter=',', columns=None, encoding='utf-8'):
     """
     Append content to the end of an s3 object using the specified type to convert it prior to writing.
@@ -981,16 +1045,6 @@ def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_ne
     else:
         raise TypeError('Unhandled type')
     __append(content, bucket=bucket, key=key)
-
-
-def __value_mapping_to_delimited_bytes(value, columns=None, newline='\n', delimiter=',', encoding='utf-8'):
-    keys = columns if columns else value.keys()
-    buff = StringIO()
-    for i, k in enumerate(keys):
-        if i > 0:
-            buff.write(delimiter)
-        buff.write(str(value.get(k, '')))
-    return __value_bytes_as(buff.getvalue(), str, encoding=encoding, suffix=newline)
 
 
 def move(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key=None, new_uri=None):
