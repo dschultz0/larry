@@ -115,7 +115,10 @@ def _normalize_location(*location, uri: str = None, bucket: str = None, key: str
         if len(location) > 2:
             raise TypeError('Too many location values')
         if len(location) == 1:
-            if isinstance(location[0], list) and location[0][0].startswith('s3:'):
+            if isinstance(location[0], Object) or type(location[0]).__name__ == "s3.Object":
+                bucket = location[0].bucket_name
+                key = location[0].key
+            elif isinstance(location[0], list) and location[0][0].startswith('s3:'):
                 uri = location[0]
             elif isinstance(location[0], str) and location[0].startswith('s3:'):
                 uri = location[0]
@@ -144,6 +147,9 @@ def _normalize_location(*location, uri: str = None, bucket: str = None, key: str
 
     if isinstance(key, list) and not allow_multiple:
         raise TypeError('You cannot provide a list of keys for this function')
+
+    if isinstance(bucket, Bucket) or type(bucket).__name__ == "s3.Bucket":
+        bucket = bucket.name
 
     if require_bucket:
         if not isinstance(bucket, str):
@@ -856,6 +862,12 @@ def _(value):
     return {"value": value}
 
 
+@append_as.register_eq(int)
+@append_as.register_eq(float)
+def _(value):
+    return {"value": str(value)}
+
+
 @append_as.register_eq(dict)
 @append_as.register_eq(json)
 def _(value, **kwargs):
@@ -887,8 +899,10 @@ def append(value, *location, bucket=None, key=None, uri=None, prefix=None, suffi
 
 
 @append.register(str)
+@append.register(int)
+@append.register(float)
 def _(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding="utf-8", **kwargs):
-    append_as(value, str, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=encoding,
+    append_as(value, type(value), *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=encoding,
               **kwargs)
 
 
@@ -917,29 +931,8 @@ def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, 
 
 def append_old(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8'):
 
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    # the append logic is designed around text based files so we'll convert int and float values to string first
-    if isinstance(value, int) or isinstance(value, float):
-        value = str(value)
-
-    # write out the new string
-    if isinstance(value, str):
-        __append(__value_bytes_as(value,
-                                  str,
-                                  encoding=encoding,
-                                  suffix=newline if incl_newline else None)[0],
-                 bucket=bucket, key=key)
-
-    # write out the new json
-    elif isinstance(value, Mapping):
-        __append(__value_bytes_as(value,
-                                  dict,
-                                  encoding=encoding,
-                                  suffix=newline if incl_newline else None)[0],
-                 bucket=bucket, key=key)
-
     # iterate through a list of values using the same write approach
-    elif hasattr(value, '__iter__'):
+    if hasattr(value, '__iter__'):
         buff = BytesIO()
         for v in value:
             if isinstance(v, int) or isinstance(v, float):

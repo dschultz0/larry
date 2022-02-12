@@ -54,6 +54,8 @@ class S3Tests(unittest.TestCase):
         return [
             (args, kwargs),
             (args + [bucket, key], kw_noloc),
+            (args + [lry.s3.Object(bucket, key)], kw_noloc),
+            (args + [lry.s3.Bucket(bucket), key], kw_noloc),
             (args + [uri], kw_noloc),
             (args, kw_uri),
         ]
