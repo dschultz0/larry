@@ -1,7 +1,7 @@
 import larry.core
 import boto3
 import json
-from collections import Mapping
+from collections.abc import Mapping
 from botocore.exceptions import ClientError
 from larry import sts
 

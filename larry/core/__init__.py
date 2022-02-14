@@ -4,6 +4,22 @@ import inspect
 from functools import wraps
 
 
+KWSPECS = {}
+
+
+def function_kwargs(fnc):
+    try:
+        return KWSPECS[fnc]
+    except KeyError:
+        args = inspect.getfullargspec(fnc).kwonlyargs
+        KWSPECS[fnc] = args
+        return args
+
+
+def supported_kwargs(fnc, **kwargs):
+    return {k: v for k, v in kwargs.items() if k in function_kwargs(fnc)}
+
+
 def is_arn(value):
     return value.startswith('arn:aws:')
 

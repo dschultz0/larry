@@ -1,4 +1,4 @@
-from types import ModuleType
+import botocore.exceptions
 import boto3
 from boto3.s3.transfer import TransferConfig
 import os
@@ -6,22 +6,22 @@ import posixpath
 import re
 import uuid
 import json
-import inspect
 import csv
+import pickle
+import mimetypes
 from io import StringIO, BytesIO
 import tempfile
 from collections.abc import Mapping
-
+import warnings
 import larry.core
+from larry.utils.dispatch import larrydispatch
 from larry import utils
 from larry import sts
 from larry import ClientError
-from larry.core import ResourceWrapper, attach_exception_handler
-from urllib import parse
-from urllib import request
+from larry.core import ResourceWrapper, attach_exception_handler, supported_kwargs
+from urllib import parse, request
 from zipfile import ZipFile
 from enum import Enum
-from functools import wraps
 
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
@@ -29,6 +29,8 @@ __session = boto3.session.Session()
 __resource = __session.resource('s3')
 
 URI_REGEX = re.compile("^[sS]3://([a-z0-9.-]{3,})/?(.*)")
+DEFAULT_ENCODING = "utf-8"
+DEFAULT_NEWLINE = "\n"
 
 ACL_PRIVATE = 'private'
 ACL_PUBLIC_READ = 'public-read'
@@ -45,6 +47,29 @@ CLASS_ONEZONE_IA = 'ONEZONE_IA'
 CLASS_INTELLIGENT_TIERING = 'INTELLIGENT_TIERING'
 CLASS_GLACIER = 'GLACIER'
 CLASS_DEEP_ARCHIVE = 'DEEP_ARCHIVE'
+
+# The following associations override guesses from mimetypes
+__extension_types = {
+    'csv': 'text/csv',
+    'jsonl': 'application/x-jsonlines',
+    'js': 'text/javascript',
+    'zip': 'application/zip',
+    'sql': 'application/sql',
+    'webp': 'image/webp',
+    'ico': 'image/vnd.microsoft.icon',
+    'pkl': 'application/octet-stream'
+}
+
+__content_type_to_pillow_format = {
+    'image/png': 'PNG',
+    'image/jpeg': 'JPEG',
+    'image/gif': 'GIF',
+    'image/tiff': 'TIFF',
+    'image/webp': 'WebP',
+    'image/bmp': 'BMP',
+    'image/vnd.microsoft.icon': 'ICO',
+    'image/x-icon': 'ICO'
+}
 
 
 def __getattr__(name):
@@ -85,80 +110,62 @@ def set_session(aws_access_key_id=None,
     __resource = __session.resource('s3')
 
 
-def _resolve_location(require_bucket=True, require_key=False, key_arg='key', allow_multiple=False):
-    """
-    Builds a function decorator that will reconcile methods of passing an object to a function. Allows functions
-    to accept bucket/key pairs or URIs, either as named or location parameters.
+def _normalize_location(*location, uri: str = None, bucket: str = None, key: str = None,
+                        require_bucket=True, require_key=True, key_arg='key', allow_multiple=False):
+    if not any([uri, bucket, key]):
+        if len(location) == 0:
+            raise TypeError('A location must be specified')
+        if len(location) > 2:
+            raise TypeError('Too many location values')
+        if len(location) == 1:
+            if isinstance(location[0], Object) or type(location[0]).__name__ == "s3.Object":
+                bucket = location[0].bucket_name
+                key = location[0].key
+            elif isinstance(location[0], list) and location[0][0].startswith('s3:'):
+                uri = location[0]
+            elif isinstance(location[0], str) and location[0].startswith('s3:'):
+                uri = location[0]
+            else:
+                bucket = location[0]
+        else:
+            (bucket, key) = location
+    elif len(location) > 0:
+        raise TypeError('Both positional location and ' + key_arg + ' values are present')
 
-    :param require_bucket: Require that the function call includes a bucket parameter
-    :param require_key: Require that the function call includes a key parameter
-    :param key_arg: The function argument that contains the key value
-    :param allow_multiple: Allow the function to accept a list of keys or URIs
-    :return: The decorator
-    """
-    def decorate(func):
-        spec = inspect.getfullargspec(func)
-        offset = len(spec.args)
+    if uri:
+        if isinstance(uri, list) and len(uri) > 0:
+            if not allow_multiple:
+                raise TypeError('You cannot provide a list of URIs for this function')
+            pairs = [split_uri(u) for u in uri]
+            key = []
+            bucket = pairs[0][0]
+            for pair in pairs:
+                key.append(pair[1])
+                if pair[0] != bucket:
+                    raise TypeError('Multiple values for bucket are not allowed')
+        else:
+            (bucket, key) = split_uri(uri)
+            if bucket is None:
+                raise TypeError('Invalid S3 URI')
 
-        @wraps(func)
-        def resolve_location(*args, **kwargs):
-            location = args[offset:]
-            uri, bucket, key = (None, None, None)
-            if kwargs.get('uri') is None and kwargs.get('bucket') is None and kwargs.get(key_arg) is None:
-                if len(location) == 0:
-                    raise TypeError('A location must be specified')
-                if len(location) > 2:
-                    raise TypeError('Too many location values')
-                if len(location) == 1:
-                    if isinstance(location[0], list) and location[0][0].startswith('s3:'):
-                        uri = location[0]
-                    elif isinstance(location[0], str) and location[0].startswith('s3:'):
-                        uri = location[0]
-                    else:
-                        bucket = location[0]
-                else:
-                    (bucket, key) = location
-            elif len(location) > 0:
-                raise TypeError('Both positional location and ' + key_arg + ' values are present')
+    if isinstance(key, list) and not allow_multiple:
+        raise TypeError('You cannot provide a list of keys for this function')
 
-            if 'uri' in kwargs and kwargs['uri'] is not None:
-                uri = kwargs['uri']
-            if 'bucket' in kwargs and kwargs['bucket'] is not None:
-                bucket = kwargs['bucket']
-            if key_arg in kwargs and kwargs[key_arg] is not None:
-                key = kwargs[key_arg]
+    if isinstance(bucket, Bucket) or type(bucket).__name__ == "s3.Bucket":
+        bucket = bucket.name
 
-            if uri:
-                if isinstance(uri, list) and len(uri) > 0:
-                    if not allow_multiple:
-                        raise TypeError('You cannot provide a list of URIs for {}'.format(func.__name__))
-                    pairs = [split_uri(u) for u in uri]
-                    key = []
-                    bucket = pairs[0][0]
-                    for pair in pairs:
-                        key.append(pair[1])
-                        if pair[0] != bucket:
-                            raise TypeError('Multiple values for bucket are not allowed')
-                else:
-                    (bucket, key) = split_uri(uri)
-                    if bucket is None:
-                        raise TypeError('Invalid S3 URI')
+    if require_bucket:
+        if not isinstance(bucket, str):
+            raise TypeError(f"bucket must be of type 'str'")
+        if bucket is None or len(bucket) == 0:
+            raise TypeError('A bucket must be provided')
+    if require_key:
+        if not isinstance(key, str) and not isinstance(key, list):
+            raise TypeError("key must be of type 'str'")
+        if key is None or len(key) == 0:
+            raise TypeError('A key must be provided')
 
-            if isinstance(key, list) and not allow_multiple:
-                raise TypeError('You cannot provide a list of keys for {}'.format(func.__name__))
-
-            if require_bucket and (bucket is None or len(bucket) == 0):
-                raise TypeError('A bucket must be provided')
-            if require_key and (key is None or len(key) == 0):
-                raise TypeError('A key must be provided')
-
-            kwargs['bucket'] = bucket
-            kwargs[key_arg] = key
-            return func(*args, **kwargs)
-
-        return resolve_location
-
-    return decorate
+    return bucket, key, uri
 
 
 class Object(ResourceWrapper):
@@ -179,8 +186,8 @@ class Object(ResourceWrapper):
     :param uri: An s3:// path containing the bucket and key of the object
     """
 
-    @_resolve_location(require_key=True)
     def __init__(self, *location, bucket=None, key=None, uri=None):
+        bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
         super().__init__(Bucket(bucket).Object(key=key))
 
     @property
@@ -240,6 +247,13 @@ class Object(ResourceWrapper):
     def uri(self):
         return join_uri(self.bucket_name, self.key)
 
+    @property
+    def bucket(self):
+        return Bucket(self.bucket_name)
+
+    def __repr__(self):
+        return f'Object(bucket="{self.bucket_name}", key="{self.key}")'
+
 
 class Bucket(ResourceWrapper):
     """
@@ -279,21 +293,94 @@ class Bucket(ResourceWrapper):
         """
         Returns the public URL of the bucket (assuming permissions have been set appropriately).
         """
-        return _bucket_url(self.bucket_name)
+        return _bucket_url(self.name)
 
     @property
     def website(self):
         """
         Returns a BucketWebsite resource object.
         """
+
         class BucketWebsite(ResourceWrapper):
             def __init__(self, bucket):
                 super().__init__(bucket.Website())
 
         return BucketWebsite(self)
 
+    def __repr__(self):
+        return f'Bucket("{self.name}")'
 
-@_resolve_location(require_key=True, allow_multiple=True)
+    @property
+    def cors(self):
+        try:
+            return [CorsRule.from_response(rule) for rule in self.Cors().cors_rules]
+        except botocore.exceptions.ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "NoSuchCORSConfiguration":
+                return None
+            else:
+                raise e
+
+    @cors.setter
+    def cors(self, rules):
+        if isinstance(rules, CorsRule):
+            rules = [rules.to_dict()]
+        elif isinstance(rules, dict):
+            rules = [rules]
+        elif isinstance(rules, list):
+            rules = [rule.to_dict() if isinstance(rule, CorsRule) else rule for rule in rules]
+        else:
+            raise Exception("CORS rules must be a single or list of larry.s3.CorsRule objects or dict objects")
+        self.Cors().put(CORSConfiguration={
+            "CORSRules": rules
+        })
+
+    @cors.deleter
+    def cors(self):
+        self.Cors().delete()
+
+
+class CorsRule:
+    def __init__(self, allowed_methods, allowed_origins, _id=None, allowed_headers=None, expose_headers=None,
+                 max_age_seconds=None):
+        self.allowed_methods = allowed_methods
+        self.allowed_origins = allowed_origins
+        self.id = _id
+        self.allowed_headers = allowed_headers
+        self.expose_headers = expose_headers
+        self.max_age_seconds = max_age_seconds
+
+    @classmethod
+    def from_response(cls, rule):
+        return cls(allowed_methods=rule.get("AllowedMethods"),
+                   allowed_origins=rule.get("AllowedOrigins"),
+                   _id=rule.get("ID"),
+                   allowed_headers=rule.get("AllowedHeaders"),
+                   expose_headers=rule.get("ExposeHeaders"),
+                   max_age_seconds=rule.get("MaxAgeSeconds"))
+
+    @classmethod
+    def default(cls):
+        return cls(["GET"], ["*"])
+
+    def to_dict(self):
+        value = {
+            "AllowedMethods": self.allowed_methods,
+            "AllowedOrigins": self.allowed_origins,
+        }
+        if self.id:
+            value["ID"] = self.id
+        if self.allowed_headers:
+            value["AllowedHeaders"] = self.allowed_headers
+        if self.expose_headers:
+            value["ExposeHeaders"] = self.expose_headers
+        if self.max_age_seconds:
+            value["MaxAgeSeconds"] = self.max_age_seconds
+        return value
+
+    def __repr__(self):
+        return f"CorsRule({self.allowed_methods}, {self.allowed_origins})"
+
+
 def delete(*location, bucket=None, key=None, uri=None):
     """
     Deletes the object defined by the bucket/key pair or uri.
@@ -303,27 +390,13 @@ def delete(*location, bucket=None, key=None, uri=None):
     :param key: The key of the object, this can be a single str value or a list of keys to delete
     :param uri: An s3:// path containing the bucket and key of the object
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     if isinstance(key, list):
         Bucket(bucket=bucket).delete_objects(Delete={'Objects': [{'Key': k} for k in key], 'Quiet': True})
     else:
         Object(bucket=bucket, key=key).delete()
 
 
-@_resolve_location(require_key=True)
-def _get_obj(*location, bucket=None, key=None, uri=None):
-    """
-    Performs a 'get' of the object defined by the bucket/key pair or uri.
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :return: Dict containing the Body of the object and associated attributes
-    """
-    return Object(bucket=bucket, key=key).get()
-
-
-@_resolve_location(require_key=True)
 def size(*location, bucket=None, key=None, uri=None):
     """
     Returns the number of bytes (content_length) in an S3 object.
@@ -334,11 +407,11 @@ def size(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: Size in bytes
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).content_length
 
 
-@_resolve_location(require_key=True)
-def content_type(*location, bucket=None, key=None, uri=None):
+def get_content_type(*location, bucket=None, key=None, uri=None):
     """
     Returns the content type assigned to the object
 
@@ -348,10 +421,10 @@ def content_type(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: A standard MIME type describing the format of the object data.
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).content_type
 
 
-@_resolve_location(require_key=True)
 def read(*location, bucket=None, key=None, uri=None, byte_count=None):
     """
     Retrieves the contents of an S3 object
@@ -363,12 +436,12 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None):
     :param byte_count: The max number of bytes to read from the object. All data is read if omitted.
     :return: The bytes contained in the object
     """
-    return _get_obj(bucket=bucket, key=key, uri=uri)['Body'].read(byte_count)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return Object(bucket=bucket, key=key).get()['Body'].read(byte_count)
 
 
-@_resolve_location(require_key=True)
-def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
-            allow_single_quotes=False, use_decoder=False, **kwargs):
+@larrydispatch
+def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     """
     Reads in the s3 object defined by the bucket/key pair or uri and loads the
     contents into an object of the specified type.
@@ -385,214 +458,126 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
     :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param use_decoder: Indicate that JSON objects should be read in with the using the larry decoder and converted
-    to objects.
-    :param allow_single_quotes: Allow single quotes to be used in JSON data (only used for dict and json type)
     :return: An object representation of the data in S3
     """
-    if isinstance(type_, type) and type_.__name__ == 'ndarray':
-        try:
-            import numpy as np
-            with tempfile.TemporaryFile() as fp:
-                download(fp, bucket=bucket, key=key, uri=uri)
-                fp.seek(0)
-                return np.fromfile(fp)
-        except ImportError as e:
-            # Simply raise the ImportError to let the user know this requires Numpy to function
-            raise e
-    elif (isinstance(type_, ModuleType) and type_.__name__ in ['cv2', 'cv2.cv2']) or \
-            (callable(type_) and type_.__name__ == 'imread'):
-        fp = None
-        try:
-            fp = tempfile.NamedTemporaryFile(delete=False)
+    raise TypeError("Unsupported type")
+
+
+@read_as.register_module_name("numpy")
+@read_as.register_type_name("ndarray")
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    try:
+        import numpy as np
+        with tempfile.TemporaryFile() as fp:
             download(fp, bucket=bucket, key=key, uri=uri)
-            fp.close()
-            if type_.__name__ in ['cv2', 'cv2.cv2']:
-                img = type_.imread(fp.name, **kwargs)
-            else:
-                img = type_(fp.name, **kwargs)
-        finally:
-            if fp:
-                os.remove(fp.name)
-        return img
-    else:
-        objct = read(bucket=bucket, key=key, uri=uri)
-        if type_ == dict or type_ == json:
-            try:
-                return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
-            except json.JSONDecodeError as e:
-                if allow_single_quotes:
-                    # TODO: Use a more stable replace operation that will handle nested quotes
-                    return json.loads(objct.decode(encoding).replace("'", '"'), object_hook=utils.JSONDecoder)
-                else:
-                    raise e
-        elif type_ == str:
-            return objct.decode(encoding)
-        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
-            return type_.open(BytesIO(objct))
+            fp.seek(0)
+            return np.fromfile(fp)
+    except ImportError as ex:
+        # Simply raise the ImportError to let the user know this requires Numpy to function
+        raise ex
+
+
+@read_as.register_module_name("cv2")
+@read_as.register_callable_name("imread")
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    fp = None
+    try:
+        fp = tempfile.NamedTemporaryFile(delete=False)
+        download(fp, bucket=bucket, key=key, uri=uri)
+        fp.close()
+        if type_.__name__ in ['cv2', 'cv2.cv2']:
+            img = type_.imread(fp.name, **kwargs)
         else:
-            raise TypeError('Unhandled type')
+            img = type_(fp.name, **kwargs)
+    finally:
+        if fp:
+            os.remove(fp.name)
+    return img
 
 
-@_resolve_location(require_key=True)
-def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    """
-    Reads in the s3 object defined by the bucket/key pair or uri, decodes it to a string, and
-    splits it into lines. Returns an array containing the contents of each line in the specified format.
-
-    :param o_type: A data type specify how to load the data
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param newline: The line separator to use when reading in the object
-    :return: An object representation of the data in S3
-    """
+@read_as.register_eq(json)
+@read_as.register_eq(dict)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
-    lines = objct.decode(encoding).split(newline)
-    records = []
-    for i, line in enumerate(lines):
-        if len(line) > 0:
-            # TODO: Would a handler or local constant be a better idea here?
-            if o_type == dict:
-                try:
-                    records.append(json.loads(line, object_hook=utils.JSONDecoder))
-                except json.decoder.JSONDecodeError as e:
-                    # TODO: Tighten up this exception
-                    raise Exception(f"Failed to read json on line {i+1}: {str(e)}") from e
-            elif o_type == str:
-                records.append(line)
-            else:
-                raise TypeError('Unhandled type')
-    return records
+
+    try:
+        return json.loads(objct.decode(encoding), object_hook=utils.JSONDecoder)
+    except json.JSONDecodeError as ex:
+        if kwargs.get("allow_single_quotes"):
+            # TODO: Use a more stable replace operation that will handle nested quotes
+            return json.loads(objct.decode(encoding).replace("'", '"'), object_hook=utils.JSONDecoder)
+        else:
+            raise ex
 
 
-@_resolve_location(require_key=True)
-def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    """
-    Reads in the s3 object defined by the bucket/key pair or uri, decodes it to a string, and
-    splits it into lines. Returns an iterator containing the contents of each line.
-
-    :param o_type: The data type to use for reading in the data
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param newline: The line separator to use when reading in the object
-    :return: An object representation of the data in S3
-    """
-
+@read_as.register_eq(str)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
-    lines = objct.decode(encoding).split(newline)
-    for line in lines:
-        if len(line) > 0:
-            # TODO: Would a handler or local constant be a better idea here?
-            if o_type == dict:
-                yield json.loads(line, object_hook=utils.JSONDecoder)
-            elif o_type == str:
-                yield line
-            else:
-                raise TypeError('Unhandled type')
+    return objct.decode(encoding)
 
 
-@_resolve_location(require_key=True)
-def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', use_decoder=False):
-    """
-    Reads in the s3 object defined by the bucket/key pair or uri and
-    loads the json contents into a dict.
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param use_decoder: Indicate that JSON objects should be read in with the using the larry decoder and converted
-    to objects.
-    :return: A dict representation of the json contained in the object
-    """
-    return read_as(dict, bucket=bucket, key=key, uri=uri, encoding=encoding, use_decoder=use_decoder)
+@read_as.register_module_name("PIL.Image")
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return type_.open(BytesIO(objct))
 
 
-@_resolve_location(require_key=True)
-def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8'):
-    """
-    Reads in the s3 object defined by the bucket/key pair or uri and
-    decodes it to text.
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :return: The contents of the object as a string
-    """
-    return read_as(str, bucket=bucket, key=key, uri=uri)
+@read_as.register_eq([dict])
+@read_as.register_eq([json])
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    lines = objct.decode(encoding).split(kwargs.get("newline", DEFAULT_NEWLINE))
+    if kwargs.get("use_decoder"):
+        return [json.loads(line, object_hook=utils.JSONDecoder) for line in lines if len(line) > 0]
+    else:
+        return [json.loads(line) for line in lines if len(line) > 0]
 
 
-@_resolve_location(require_key=True)
-def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    """
-    Reads in the s3 object defined by the bucket/key pair or uri and
-    loads the JSON Lines data into a list of dict objects.
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param newline: The line separator to use when reading in the object
-    :return: The contents of the object as a list of dict objects
-    """
-    return read_list_as(dict, bucket=bucket, key=key, uri=uri,
-                        encoding=encoding, newline=newline)
+@read_as.register_eq([str])
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    lines = objct.decode(encoding).split(kwargs.get("newline", DEFAULT_NEWLINE))
+    return [line for line in lines if len(line) > 0]
 
 
-@_resolve_location(require_key=True)
-def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
-    """
-    Reads in the s3 object defined by the bucket/key pair or uri and
-    loads the JSON Lines data into a list of dict objects.
-
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param encoding: The charset to use when decoding the object bytes, utf-8 by default
-    :param newline: The line separator to use when reading in the object
-    :return: The contents of the object as a list of dict objects
-    """
-    return read_list_as(str, bucket=bucket, key=key, uri=uri,
-                        encoding=encoding, newline=newline)
+@read_as.register_eq(csv)
+@read_as.register_eq(csv.reader)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return csv.reader(StringIO(objct), **kwargs)
 
 
-def __write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
-            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None, 
-            tags=None):
+@read_as.register_eq(csv.DictReader)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return csv.DictReader(StringIO(objct), **kwargs)
+
+
+@read_as.register_eq(pickle)
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    objct = read(bucket=bucket, key=key, uri=uri)
+    return pickle.loads(objct, **kwargs)
+
+
+def _write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
+           content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
+           tags=None, encoding=None):
     """
     Write an object to the bucket/key pair or uri.
-
-    :param body: Data to write
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param acl: The canned ACL to apply to the object
-    :param content_type: A standard MIME type describing the format of the object data
-    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-    mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
-    :param content_language: The language the content is in.
-    :param content_length: Size of the body in bytes.
-    :param metadata: A map of metadata to store with the object in S3.
-    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
-    :param storage_class: The S3 storage class to store the object in.
-    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
-    :return: The URI of the object written to S3
+    :return: The object written to S3
     """
     params = larry.core.map_parameters(locals(), {
         'acl': 'ACL',
-        'body': 'Body',
         'content_encoding': 'ContentEncoding',
         'content_language': 'ContentLanguage',
         'content_length': 'ContentLength',
@@ -603,198 +588,170 @@ def __write(body, bucket=None, key=None, uri=None, acl=None, content_type=None, 
     })
     if tags:
         params['Tagging'] = parse.urlencode(tags) if isinstance(tags, Mapping) else tags
+    if isinstance(body, str):
+        if encoding is None:
+            encoding = DEFAULT_ENCODING
+        params["Body"] = body.encode(encoding)
+    else:
+        params["Body"] = body
 
-    Object(bucket=bucket, key=key).put(**params)
-    return join_uri(bucket, key)
-
-
-__extension_types = {
-    'css': 'text/css',
-    'html': 'text/html',
-    'xhtml': 'text/html',
-    'htm': 'text/html',
-    'xml': 'text/xml',
-    'csv': 'text/csv',
-    'txt': 'text/plain',
-    'png': 'image/png',
-    'jpeg': 'image/jpeg',
-    'jpg': 'image/jpeg',
-    'gif': 'image/gif',
-    'jsonl': 'application/x-jsonlines',
-    'json': 'application/json',
-    'js': 'application/javascript',
-    'zip': 'application/zip',
-    'pdf': 'application/pdf',
-    'sql': 'application/sql',
-    'tiff': 'image/tiff',
-    'tif': 'image/tiff',
-    'webp': 'image/webp',
-    'bmp': 'image/bmp',
-    'ico': 'image/vnd.microsoft.icon',
-    'svg': 'image/svg+xml'
-}
-
-__content_type_to_pillow_format = {
-    'image/png': 'PNG',
-    'image/jpeg': 'JPEG',
-    'image/gif': 'GIF',
-    'image/tiff': 'TIFF',
-    'image/webp': 'WebP',
-    'image/bmp': 'BMP',
-    'image/vnd.microsoft.icon': 'ICO'
-}
+    obj = Object(bucket=bucket, key=key)
+    obj.put(**params)
+    return obj
 
 
-@_resolve_location(require_key=True)
-def write_as(value, type_, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
-             columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-             content_length=None, metadata=None, sse=None, storage_class=None, tags=None, **kwargs):
-    """
-    Write an object to the bucket/key pair (or uri), converting the python
-    object to an appropriate format to write to file.
+@larrydispatch
+def format_type_for_write(_type, value, key=None, content_type=None, **kwargs):
+    return value, __recommend_content_type(content_type, key)
 
-    :param value: Object to write to S3
-    :param type_: The data type to write the value using
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param newline: Character(s) to use as a newline for list objects
-    :param delimiter: Column delimiter to use, ',' by default
-    :param columns: The columns to write out from the source rows, dict keys or list indexes
-    :param headers: Headers to add to the output
-    :param acl: The canned ACL to apply to the object
-    :param content_type: Content type to apply to the file, if not present a suggested type will be applied
-    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-        mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
-    :param content_language: The language the content is in.
-    :param content_length: Size of the body in bytes.
-    :param metadata: A map of metadata to store with the object in S3.
-    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
-    :param storage_class: The S3 storage class to store the object in.
-    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
-    :return: The URI of the object written to S3
-    """
+
+@format_type_for_write.register_module_name("cv2")
+@format_type_for_write.register_callable_name("imwrite")
+def _(_type, value, key=None, content_type=None, **kwargs):
     suffix = os.path.splitext(key)[1]
-    extension = suffix[1:] if suffix else None
-    if (isinstance(type_, ModuleType) and type_.__name__ in ['cv2', 'cv2.cv2']) or \
-            (callable(type_) and type_.__name__ == 'imwrite'):
-        handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
-        try:
-            if content_type is None:
-                content_type = __extension_types.get(extension, __extension_types.get(suffix[1:].lower(), 'image/png'))
-            if type_.__name__ in ['cv2', 'cv2.cv2']:
-                type_.imwrite(filepath, value, **kwargs)
-            else:
-                type_(filepath, value, **kwargs)
-            with open(filepath, 'rb') as fp:
-                result = upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                                content_encoding=content_encoding, content_language=content_language,
-                                content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                                tags=tags)
-        finally:
-            os.close(handle)
-            if os.path.exists(filepath):
-                os.remove(filepath)
-        return result
-    else:
-        if type_ == str:
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain')
-            objct = value
-        elif type_ == dict or type_ == json:
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'application/json')
-            objct = json.dumps(value, cls=utils.JSONEncoder, **kwargs)
-        elif isinstance(type_, list) and len(type_) > 0 and type_[0] == dict:
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain')
-            buff = StringIO()
-            for row in value:
-                buff.write(json.dumps(row, cls=utils.JSONEncoder, **kwargs) + newline)
-            objct = buff.getvalue()
-        elif type_ == csv:
-            # TODO: Flush this out to fully use csv library
-            if content_type is None:
-                content_type = __extension_types.get(extension, 'text/plain')
-            buff = StringIO()
-            # empty
-            if value is None or len(value) == 0:
-                if headers:
-                    buff.write(_array_to_string(headers, delimiter) + newline)
-                buff.write('')
-
-            # list
-            elif isinstance(value[0], list):
-                indices = columns if columns else None
-                if headers:
-                    buff.write(_array_to_string(headers, delimiter) + newline)
-                for row in value:
-                    buff.write(_array_to_string(row, delimiter, indices) + newline)
-
-            # dict
-            elif isinstance(value[0], Mapping):
-                keys = columns if columns else value[0].keys()
-                buff.write(_array_to_string(headers if headers else keys, delimiter) + newline)
-
-                for row in value:
-                    line = ''
-                    for i, k in enumerate(keys):
-                        value = '' if row.get(k) is None else str(row.get(k))
-                        line = value if i == 0 else line + delimiter + value
-                    buff.write(line + newline)
-
-            # string
-            elif isinstance(value[0], str):
-                buff.writelines(value)
-            else:
-                raise TypeError('Invalid input')
-            objct = buff.getvalue()
-        elif isinstance(type_, ModuleType) and type_.__name__ == 'PIL.Image':
-            objct = BytesIO()
-            fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
-            value.save(objct, fmt)
-            objct.seek(0)
-            if content_type is None:
-                content_type = __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
+    content_type = __recommend_content_type(content_type, key, "image/png")
+    handle, filepath = tempfile.mkstemp(suffix=suffix if suffix else '.png')
+    try:
+        if _type.__name__ in ['cv2', 'cv2.cv2']:
+            _type.imwrite(filepath, value, **kwargs)
         else:
-            raise TypeError('Unhandled type')
-        return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
+            _type(filepath, value, **kwargs)
+        with open(filepath, 'rb') as fp:
+            result = fp.read()
+    finally:
+        os.close(handle)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    return {"value": result, "content_type": content_type}
 
 
-@_resolve_location(require_key=True)
-def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
-                 content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-                 storage_class=None,  tags=None, **params):
-    return write(value, bucket=bucket, key=key, uri=uri, newline=newline, acl=acl, content_type=content_type,
-                 content_encoding=content_encoding, content_language=content_language, content_length=content_length,
-                 metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, **params)
+@format_type_for_write.register_eq(str)
+def _(_type, value, key=None, content_type=None, **kwargs):
+    return value, __recommend_content_type(content_type, key, "text/plain")
 
 
-def __value_bytes_as(value, o_type, encoding='utf-8', prefix=None, suffix=None, extension=None):
-    p = '' if prefix is None else prefix
-    s = '' if suffix is None else suffix
-    if o_type == str:
-        return (p + value + s).encode(encoding), 'text/plain'
-    elif o_type == dict:
-        return (p + json.dumps(value, cls=utils.JSONEncoder) + s).encode(encoding), 'text/plain'
-    elif isinstance(o_type, ModuleType) and o_type.__name__ == 'PIL.Image':
-        objct = BytesIO()
-        fmt = value.format if hasattr(value, 'format') and value.format is not None else 'PNG'
-        value.save(objct, fmt)
-        objct.seek(0)
-        return objct.getvalue(), __extension_types.get(extension, __extension_types.get(fmt.lower(), 'text/plain'))
-    else:
-        raise TypeError('Unhandled type')
+@format_type_for_write.register_eq(int)
+@format_type_for_write.register_eq(float)
+def _(_type, value, key=None, content_type=None, **kwargs):
+    return str(value), __recommend_content_type(content_type, key, "text/plain")
 
 
-@_resolve_location(require_key=True)
-def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+@format_type_for_write.register_eq(dict)
+@format_type_for_write.register_eq(json)
+def _(_type, value, key=None, content_type=None, **kwargs):
+    kw = supported_kwargs(json.dumps, **kwargs)
+    return (json.dumps(value, cls=kwargs.get("cls", utils.JSONEncoder), **kw),
+            __recommend_content_type(content_type, key, "application/json"))
+
+
+@format_type_for_write.register_eq([str])
+def _(_type, value, key=None, content_type=None, **kwargs):
+    buff = StringIO()
+    for row in value:
+        buff.write(row + kwargs.get("newline", DEFAULT_NEWLINE))
+    return buff.getvalue(), __recommend_content_type(content_type, key, "text/plain")
+
+
+@format_type_for_write.register_eq([dict])
+@format_type_for_write.register_eq([json])
+def _(_type, value, key=None, content_type=None, **kwargs):
+    kw = supported_kwargs(json.dumps, **kwargs)
+    buff = StringIO()
+    for row in value:
+        buff.write(json.dumps(row, cls=kwargs.get("cls", utils.JSONEncoder), **kw) + kwargs.get("newline", DEFAULT_NEWLINE))
+    return buff.getvalue(), __recommend_content_type(content_type, key, "text/plain")
+
+
+@format_type_for_write.register_eq(csv)
+@format_type_for_write.register_eq(csv.writer)
+def _(_type, value, key=None, content_type=None, **kwargs):
+    buff = StringIO()
+    writer = csv.writer(buff, **kwargs)
+    for row in value:
+        writer.writerow(row)
+    return buff.getvalue(), __recommend_content_type(content_type, key, "text/plain")
+
+
+@format_type_for_write.register_eq(pickle)
+def _(_type, value, key=None, content_type=None, **kwargs):
+    return pickle.dumps(value, **kwargs), __recommend_content_type(content_type, key, "application/octet-stream")
+
+
+def __get_pillow_format(value, content_type, key, **kwargs):
+    content_type = __recommend_content_type(content_type, key, value.get_format_mimetype())
+    fmt = kwargs.get("format", value.format)
+    if fmt is None:
+        fmt = __content_type_to_pillow_format.get(content_type, "PNG")
+    return content_type, fmt
+
+
+@format_type_for_write.register_module_name("PIL.Image")
+def _(_type, value, key=None, content_type=None, **kwargs):
+    content_type, fmt = __get_pillow_format(value, content_type, key, **kwargs)
+    objct = BytesIO()
+    value.save(objct, fmt)
+    objct.seek(0)
+    return objct.getvalue(), content_type
+
+
+@format_type_for_write.register_type_name("ndarray")
+@format_type_for_write.register_class_name("ndarray")
+def _(_type, value, key=None, content_type=None, **kwargs):
+    kw = {k: v for k, v in kwargs.items() if k in ["sep", "format"]}
+    with tempfile.TemporaryFile() as fp:
+        value.tofile(fp, **kw)
+        fp.seek(0)
+        return fp.file.read(), None
+
+
+def write_as(value, _type, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+             content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+             storage_class=None, tags=None, encoding=None, **kwargs):
+    """
+    Write an object to the bucket/key pair (or uri), converting the python
+    object to an appropriate format to write to file.
+
+    :param value: Object to write to S3
+    :param _type: The data type to write the value using
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param acl: The canned ACL to apply to the object
+    :param content_type: Content type to apply to the file, if not present a suggested type will be applied
+    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
+        mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
+    :param content_language: The language the content is in.
+    :param content_length: Size of the body in bytes.
+    :param metadata: A map of metadata to store with the object in S3.
+    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
+    :param storage_class: The S3 storage class to store the object in.
+    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
+    :param encoding: The byte encoding to use for str values.
+    :return: The URI of the object written to S3
+    """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    value, content_type = format_type_for_write(_type, value, key, content_type)
+    return _write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                  content_encoding=content_encoding, content_language=content_language,
+                  content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                  tags=tags, encoding=encoding)
+
+
+def __recommend_content_type(content_type, key, default=None):
+    if content_type is None:
+        if key:
+            suffix = os.path.splitext(key)[1]
+            extension = suffix[1:].lower() if suffix else None
+            content_type = __extension_types.get(extension, mimetypes.guess_type(key)[0])
+        content_type = content_type if content_type else default
+    return content_type
+
+
+@larrydispatch
+def write(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
           content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
-          storage_class=None,  tags=None, **params):
+          storage_class=None, tags=None, encoding=None, **kwargs):
     """
     Write an object to the bucket/key pair (or uri), converting the python
     object to an appropriate format to write to file.
@@ -815,147 +772,120 @@ def write(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=N
     :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
     :param storage_class: The S3 storage class to store the object in.
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
+    :param encoding: The byte encoding to use for str values.
     :return: The URI of the object written to S3
     """
-    extension = key.split('.')[-1]
-    # JSON
-    if isinstance(value, Mapping):
-        return write_as(value, dict, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                        content_type=content_type, content_encoding=content_encoding,
-                        content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                        storage_class=storage_class, tags=tags)
-    # Text
-    elif isinstance(value, str):
-        return write_as(value, str, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                        content_type=content_type, content_encoding=content_encoding,
-                        content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
-                        storage_class=storage_class, tags=tags)
-
-    # List
-    # TODO: Handle iterables
-    elif isinstance(value, list):
-        if content_type is None:
-            content_type = __extension_types.get(extension, 'text/plain')
-        buff = StringIO()
-        for row in value:
-            if isinstance(row, Mapping):
-                buff.write(json.dumps(row, cls=utils.JSONEncoder) + newline)
-            else:
-                buff.write(str(row) + newline)
-        return __write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-
-    elif isinstance(value, StringIO):
-        return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-    elif isinstance(value, BytesIO):
-        value.seek(0)
-        return __write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-    elif value is None:
-        return __write('', bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                       content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
-
-    # primarily for Pillow images
-    elif hasattr(value, 'save') and callable(getattr(value, 'save', None)):
-        try:
-            # Retrieve the content type based on whatever data we have available
-            if content_type is None:
-                content_type = __extension_types.get(extension,
-                                                     __extension_types.get(params.get('format', '').lower(), 'image'))
-
-            # Confirm that a format has been provided, else try to infer it or default to PNG
-            if params.get('format') is None:
-                if hasattr(value, 'format') and value.format is not None:
-                    params['format'] = value.format
-                elif content_type in __content_type_to_pillow_format.keys():
-                    params['format'] = __content_type_to_pillow_format[content_type]
-                else:
-                    params['format'] = 'PNG'
-
-            objct = BytesIO()
-            value.save(objct, **params)
-            objct.seek(0)
-            return __write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                           content_encoding=content_encoding, content_language=content_language,
-                           content_length=content_length,
-                           metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
-        except Exception as e:
-            pass
-
-    # primarily for numpy arrays
-    elif hasattr(value, 'tofile') and callable(getattr(value, 'tofile', None)):
-        try:
-            with tempfile.TemporaryFile() as fp:
-                value.tofile(fp, **params)
-                fp.seek(0)
-                return upload(fp, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                              content_encoding=content_encoding, content_language=content_language,
-                              content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                              tags=tags)
-        except Exception as e:
-            pass
-
-    return __write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
-                   content_encoding=content_encoding, content_language=content_language,
-                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                   tags=tags)
+    raise TypeError(f"No write operation defined for value of type {type(value)}")
 
 
-def _array_to_string(row, delimiter, indices=None):
-    if indices is None:
-        indices = range(len(row))
-    line = ''
-    for x in indices:
-        line = str(row[x]) if x == 0 else line + delimiter + str(row[x])
-    return line
+@write.register(Mapping)
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    return write_as(value, dict, *location, bucket=bucket, key=key, uri=uri, acl=acl,
+                    content_type=content_type, content_encoding=content_encoding,
+                    content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                    storage_class=storage_class, tags=tags, encoding=encoding, **kwargs)
 
 
-@_resolve_location(require_key=True)
-def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
-                    columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
-                    content_length=None, metadata=None, sse=None, storage_class=None,  tags=None):
+@write.register(str)
+@write.register(bytes)
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    return write_as(value, str, *location, bucket=bucket, key=key, uri=uri, acl=acl,
+                    content_type=content_type, content_encoding=content_encoding,
+                    content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                    storage_class=storage_class, tags=tags, encoding=encoding, **kwargs)
+
+
+@write.register(StringIO)
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return _write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                  content_encoding=content_encoding, content_language=content_language,
+                  content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                  tags=tags, encoding=encoding)
+
+
+@write.register(BytesIO)
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    value.seek(0)
+    return _write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                  content_encoding=content_encoding, content_language=content_language,
+                  content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                  tags=tags, encoding=encoding)
+
+
+@write.register(type(None))
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return _write('', bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                  content_encoding=content_encoding, content_language=content_language,
+                  content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                  tags=tags, encoding=encoding)
+
+
+@write.register(list)
+# TODO: Replace with iter solution?
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    content_type = __recommend_content_type(content_type, key, "text/plain")
+    buff = StringIO()
+    for row in value:
+        if isinstance(row, Mapping):
+            v, ct = format_type_for_write(dict, row, **kwargs)
+        else:
+            v, ct = format_type_for_write(str, row, **kwargs)
+        buff.write(v + kwargs.get("newline", DEFAULT_NEWLINE))
+    return _write(buff.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                  content_encoding=content_encoding, content_language=content_language,
+                  content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                  tags=tags, encoding=encoding)
+
+
+@write.register_class_name("PngImageFile")
+@write.register_class_name("JpegImageFile")
+# TODO: Add the rest; better option?
+# TODO: Consider other ways to pass this to the write_as option. The problem is that the Image object isn't available to pass directly from here
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    content_type, fmt = __get_pillow_format(value, content_type, key, **kwargs)
+    objct = BytesIO()
+    value.save(objct, fmt)
+    objct.seek(0)
+    return _write(objct, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
+                  content_encoding=content_encoding, content_language=content_language,
+                  content_length=content_length,
+                  metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
+
+
+@write.register_class_name("ndarray")
+def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
+      content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+      storage_class=None, tags=None, encoding=None, **kwargs):
+    return write_as(value, value, *location, bucket=bucket, key=key, uri=uri, acl=acl,
+                    content_type=content_type, content_encoding=content_encoding,
+                    content_language=content_language, content_length=content_length, metadata=metadata, sse=sse,
+                    storage_class=storage_class, tags=tags, **kwargs)
+
+
+def __append(content, bucket=None, key=None, prefix=None, suffix=None, encoding=None):
     """
-    Write an object to the bucket/key pair (or uri), converting the python
-    object to an appropriate format to write to file.
-
-    :param rows: List of data to write, rows can be of type list, dict or str
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param acl: The canned ACL to apply to the object
-    :param newline: Character(s) to use as a newline for list objects
-    :param delimiter: Column delimiter to use, ',' by default
-    :param columns: The columns to write out from the source rows, dict keys or list indexes
-    :param headers: Headers to add to the output
-    :param content_type: Content type to apply to the file, if not present a suggested type will be applied
-    :param content_encoding: Specifies what content encodings have been applied to the object and thus what decoding
-        mechanisms must be applied to obtain the media-type referenced by the Content-Type header field.
-    :param content_language: The language the content is in.
-    :param content_length: Size of the body in bytes.
-    :param metadata: A map of metadata to store with the object in S3.
-    :param sse: The server-side encryption algorithm used when storing this object in Amazon S3.
-    :param storage_class: The S3 storage class to store the object in.
-    :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
-    :return: The URI of the object written to S3
+    Reads in an existing object, adds additional content, and then writes it back out with the same attributes
+    and ACLs.
     """
-    return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
-                    delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
-                    content_encoding=content_encoding, content_language=content_language, content_length=content_length,
-                    metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
-
-
-@_resolve_location(require_key=True)
-def __append(content, *location, bucket=None, key=None, uri=None):
     # load the object and build the parameters that will be used to rewrite it
     objct = Object(bucket, key)
     values = {
@@ -975,14 +905,23 @@ def __append(content, *location, bucket=None, key=None, uri=None):
         'sse': 'ServerSideEncryption',
         'storage_class': 'StorageClass',
     })
-    tags = objct.tags
-    if len(tags.keys()) > 0:
-        params['Tagging'] = parse.urlencode(tags)
+    if objct.tags:
+        params['Tagging'] = parse.urlencode(objct.tags)
 
     # get the current ACL
     acl = objct.Acl()
     grants = acl.grants
     owner = acl.owner
+
+    if prefix:
+        content = prefix + content
+    if suffix:
+        content = content + suffix
+
+    if isinstance(content, str):
+        if encoding is None:
+            encoding = DEFAULT_ENCODING
+        content = content.encode(encoding)
 
     body = objct.get()['Body'].read() + content
     objct.put(Body=body, **params)
@@ -992,161 +931,78 @@ def __append(content, *location, bucket=None, key=None, uri=None):
     })
 
 
-@_resolve_location(require_key=True)
-def append(value, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n', encoding='utf-8'):
+def append_as(value, _type, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=DEFAULT_ENCODING,
+              **kwargs):
     """
     Append content to the end of an s3 object. Assumes that the data should be treated as text in most cases.
 
     Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
     intended as a helper for simple operations such as capturing infrequent events and should not be used in a
-    multi-threaded or multi-user environment.
+    multithreading or multi-user environment.
+
+    :param value: Data to write
+    :param _type: The data type to write the value using
+    :param location: Positional values for bucket, key, and/or uri
+    :param bucket: The S3 bucket for object to retrieve
+    :param key: The key of the object to be retrieved from the bucket
+    :param uri: An s3:// path containing the bucket and key of the object
+    :param prefix: Value to prepend to the value
+    :param suffix: Value to attach to the end of the value such as "\n"
+    :param encoding: Encoding to use when writing str to bytes
+    """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    value, content_type = format_type_for_write(_type, value, key, None)
+    __append(value, bucket=bucket, key=key, prefix=prefix, suffix=suffix, encoding=encoding)
+
+
+@larrydispatch
+def append(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=DEFAULT_ENCODING, **kwargs):
+    """
+    Append content to the end of an s3 object. Assumes that the data should be treated as text in most cases.
+
+    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
+    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
+    multithreading or multi-user environment.
 
     :param value: Data to write
     :param location: Positional values for bucket, key, and/or uri
     :param bucket: The S3 bucket for object to retrieve
     :param key: The key of the object to be retrieved from the bucket
     :param uri: An s3:// path containing the bucket and key of the object
-    :param incl_newline: Indicates if a newline character should be appended to the value
-    :param newline: Newline character to append to the value
+    :param prefix: Value to prepend to the value
+    :param suffix: Value to attach to the end of the value such as "\n"
     :param encoding: Encoding to use when writing str to bytes
     """
-    # the append logic is designed around text based files so we'll convert int and float values to string first
-    if isinstance(value, int) or isinstance(value, float):
-        value = str(value)
-
-    # write out the new string
-    if isinstance(value, str):
-        __append(__value_bytes_as(value,
-                                  str,
-                                  encoding=encoding,
-                                  suffix=newline if incl_newline else None)[0],
-                 bucket=bucket, key=key)
-
-    # write out the new json
-    elif isinstance(value, Mapping):
-        __append(__value_bytes_as(value,
-                                  dict,
-                                  encoding=encoding,
-                                  suffix=newline if incl_newline else None)[0],
-                 bucket=bucket, key=key)
-
-    # iterate through a list of values using the same write approach
-    elif hasattr(value, '__iter__'):
-        buff = BytesIO()
-        for v in value:
-            if isinstance(v, int) or isinstance(v, float):
-                v = str(v)
-            if isinstance(v, str):
-                buff.write(__value_bytes_as(v, str, encoding=encoding,
-                                            suffix=newline if incl_newline else None)[0])
-            elif isinstance(v, Mapping):
-                buff.write(__value_bytes_as(v, dict, encoding=encoding,
-                                            suffix=newline if incl_newline else None)[0])
-            else:
-                buff.write(v)
-        buff.seek(0)
-        __append(buff.getvalue(), bucket=bucket, key=key)
-
-    # hope that the value is in a byte format that can be appended to the existing content
-    else:
-        __append(value, bucket=bucket, key=key)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    __append(value, bucket=bucket, key=key, prefix=prefix, suffix=suffix)
 
 
-@_resolve_location(require_key=True)
-def append_as(value, o_type, *location, bucket=None, key=None, uri=None, incl_newline=True, newline='\n',
-              delimiter=',', columns=None, encoding='utf-8'):
-    """
-    Append content to the end of an s3 object using the specified type to convert it prior to writing.
-
-    Note that this is not efficient as it requires a read/write for each call and isn't thread safe. It is only
-    intended as a helper for simple operations such as capturing infrequent events and should not be used in a
-    multi-threaded or multi-user environment.
-
-    :param value: Object to write to S3
-    :param o_type: A data type to use to write the data
-    :param location: Positional values for bucket, key, and/or uri
-    :param bucket: The S3 bucket for object to retrieve
-    :param key: The key of the object to be retrieved from the bucket
-    :param uri: An s3:// path containing the bucket and key of the object
-    :param incl_newline: Boolean to indicate if a newline should be added after the content
-    :param newline: Character(s) to use as a newline for list objects
-    :param delimiter: Column delimiter to use, ',' by default
-    :param columns: The columns to write out from the source rows, dict keys or list indexes
-    :param encoding: default encoding to apply to text when converting it to bytes
-    :return: The URI of the object written to S3
-    """
-    content = None
-    extension = key.split('.')[-1]
-
-    # if we're writing as a dict or string
-    # iterate through if it's iterable, else write out the value
-    if o_type in (dict, str):
-        if hasattr(value, '__iter__') and not isinstance(value, str) and not isinstance(value, Mapping):
-            buff = BytesIO()
-            for v in value:
-                buff.write(__value_bytes_as(v, o_type, encoding=encoding, suffix=newline if incl_newline else None)[0])
-            buff.seek(0)
-            content = buff.getvalue()
-        else:
-            content = __value_bytes_as(value, o_type, encoding=encoding, suffix=newline if incl_newline else None)[0]
-
-    # write out delimited values
-    elif o_type == csv:
-        # if it's a dict or string just write them out
-        if isinstance(value, Mapping):
-            content = __value_mapping_to_delimited_bytes(value, columns=columns, newline=newline,
-                                                         delimiter=delimiter, encoding=encoding)
-        elif isinstance(value, str):
-            content = __value_bytes_as(value, str, encoding=encoding, extension=extension)[0]
-
-        # if it's a list, handle the cases where it may be a list of rows instead of just one row
-        elif hasattr(value, '__iter__'):
-            value = list(value)
-
-            # if it contains dicts, write those out as rows
-            if isinstance(value[0], Mapping):
-                buff = BytesIO()
-                for v in value:
-                    buff.write(__value_mapping_to_delimited_bytes(v, columns=columns, newline=newline,
-                                                                  delimiter=delimiter, encoding=encoding)[0])
-                buff.seek(0)
-                content = buff.getvalue()
-
-            # if it contains strings then this is just a single row of values
-            elif isinstance(value[0], str):
-                content = __value_bytes_as(_array_to_string(value, delimiter, columns), str,
-                                           encoding=encoding, suffix=newline)[0]
-
-            # if it contains inner lists, then it was a 2d array of values and we'll want to write those out
-            elif hasattr(value[0], '__iter__'):
-                buff = BytesIO()
-                for v in value:
-                    buff.write(__value_bytes_as(_array_to_string(v, delimiter, columns), str,
-                                                encoding=encoding, suffix=newline)[0])
-                buff.seek(0)
-                content=buff.getvalue()
-
-            # else assume it was non-string values that can be written out
-            else:
-                content = __value_bytes_as(_array_to_string(value, delimiter, columns), str,
-                                           encoding=encoding, suffix=newline)[0]
-
-        # else it's hopefully some type of value that can be appended to bytes (ignoring newline)
-        else:
-            content = value
-    else:
-        raise TypeError('Unhandled type')
-    __append(content, bucket=bucket, key=key)
+@append.register(str)
+@append.register(int)
+@append.register(float)
+def _(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=DEFAULT_ENCODING, **kwargs):
+    append_as(value, type(value), *location, bucket=bucket, key=key, uri=uri, prefix=prefix, suffix=suffix,
+              encoding=encoding, **kwargs)
 
 
-def __value_mapping_to_delimited_bytes(value, columns=None, newline='\n', delimiter=',', encoding='utf-8'):
-    keys = columns if columns else value.keys()
+@append.register(Mapping)
+def _(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=DEFAULT_ENCODING, **kwargs):
+    append_as(value, type(value), *location, bucket=bucket, key=key, uri=uri, prefix=prefix, suffix=suffix,
+              encoding=encoding, **kwargs)
+
+
+@append.register(list)
+# TODO: Replace with iter solution?
+def _(value, *location, bucket=None, key=None, uri=None, prefix=None, suffix=None, encoding=DEFAULT_ENCODING, **kwargs):
     buff = StringIO()
-    for i, k in enumerate(keys):
-        if i > 0:
-            buff.write(delimiter)
-        buff.write(str(value.get(k, '')))
-    return __value_bytes_as(buff.getvalue(), str, encoding=encoding, suffix=newline)
+    for row in value:
+        if isinstance(row, Mapping):
+            v, ct = format_type_for_write(dict, row, **kwargs)
+        else:
+            v, ct = format_type_for_write(str, row, **kwargs)
+        buff.write(v + kwargs.get("newline", DEFAULT_NEWLINE))
+    append_as(buff.getvalue(), str, *location, bucket=bucket, key=key, uri=uri, prefix=prefix, suffix=suffix,
+              encoding=encoding, **kwargs)
 
 
 def move(old_bucket=None, old_key=None, old_uri=None, new_bucket=None, new_key=None, new_uri=None):
@@ -1194,7 +1050,6 @@ def copy(src_bucket=None, src_key=None, src_uri=None, new_bucket=None, new_key=N
     _get_resource().meta.client.copy({'Bucket': src_bucket, 'Key': src_key}, new_bucket, new_key)
 
 
-@_resolve_location(require_key=True)
 def exists(*location, bucket=None, key=None, uri=None):
     """
     Checks to see if an object with the given bucket/key (or uri) exists.
@@ -1205,10 +1060,10 @@ def exists(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: True if the key exists, if not, False
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).exists
 
 
-@_resolve_location(key_arg='prefix')
 def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_objects=False):
     """
     Returns a iterable of the keys in the bucket that begin with the provided prefix.
@@ -1220,6 +1075,8 @@ def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_ob
     :param include_empty_objects: True if you want to include keys associated with objects of size=0
     :return: A generator of s3 Objects
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=prefix, uri=uri,
+                                           key_arg="prefix", require_key=False)
     paginator = _get_resource().meta.client.get_paginator('list_objects_v2')
     operation_parameters = {'Bucket': bucket}
     if prefix:
@@ -1302,7 +1159,6 @@ def find_keys_not_present(bucket, keys=None, uris=None):
     return not_found
 
 
-@_resolve_location(require_key=True)
 def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, content_encoding=None,
           content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
           tags=None, acl=None, incl_user_agent=False, **kwargs):
@@ -1327,6 +1183,7 @@ def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, co
     :param incl_user_agent: If true, a user agent string will be added as a header to the request
     :return: The URI of the object written to S3
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     if incl_user_agent:
         if "headers" in kwargs:
             kwargs["headers"]["User-Agent"] = utils.user_agent()
@@ -1334,13 +1191,12 @@ def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, co
             kwargs["headers"] = {"User-Agent": utils.user_agent()}
     req = request.Request(url, **kwargs)
     with request.urlopen(req) as response:
-        return __write(response.read(), bucket=bucket, key=key, acl=acl,
-                       content_type=content_type, content_encoding=content_encoding, content_language=content_language,
-                       content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
-                       tags=tags)
+        return _write(response.read(), bucket=bucket, key=key, acl=acl,
+                      content_type=content_type, content_encoding=content_encoding, content_language=content_language,
+                      content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
+                      tags=tags)
 
 
-@_resolve_location(require_key=True)
 def download(file, *location, bucket=None, key=None, uri=None, use_threads=True):
     """
     Downloads the an S3 object to a directory on the local file system.
@@ -1353,6 +1209,7 @@ def download(file, *location, bucket=None, key=None, uri=None, use_threads=True)
     :param use_threads: Enables the use_threads transfer config
     :return: Path of the local file
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     config = TransferConfig(use_threads=use_threads)
     objct = Object(bucket=bucket, key=key)
     if isinstance(file, str):
@@ -1366,7 +1223,6 @@ def download(file, *location, bucket=None, key=None, uri=None, use_threads=True)
         return file.name
 
 
-@_resolve_location(require_key=True)
 def download_to_temp(*location, bucket=None, key=None, uri=None):
     """
     Downloads the an S3 object to a temp directory on the local file system.
@@ -1377,14 +1233,15 @@ def download_to_temp(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: A file pointer to the temp file
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     fp = tempfile.TemporaryFile()
     download(fp, bucket=bucket, key=key, uri=uri)
     fp.seek(0)
     return fp
 
 
-@_resolve_location(require_key=True)
 def generate_presigned_get(*location, bucket=None, key=None, uri=None, expires_in=None, http_method=None):
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     params = {
         "ClientMethod": "get_object",
         "Params": {"Bucket": bucket, "Key": key}
@@ -1396,7 +1253,6 @@ def generate_presigned_get(*location, bucket=None, key=None, uri=None, expires_i
     return __resource.meta.client.generate_presigned_url(**params)
 
 
-@_resolve_location(require_key=True)
 def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_type=None, content_encoding=None,
            content_language=None, content_length=None, metadata=None, sse=None, storage_class=None,
            tags=None):
@@ -1420,6 +1276,7 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The uri of the file in S3
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     extra = larry.core.map_parameters(locals(), {
         'acl': 'ACL',
         'content_encoding': 'ContentEncoding',
@@ -1439,7 +1296,7 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
         objct.upload_file(file, **params)
     else:
         objct.upload_fileobj(file, **params)
-    return join_uri(bucket, key)
+    return objct
 
 
 def write_temp(value, prefix, acl=None, bucket_identifier=None, region=None,
@@ -1462,7 +1319,6 @@ def write_temp(value, prefix, acl=None, bucket_identifier=None, region=None,
     return write(value, bucket=bucket, key=key, acl=acl)
 
 
-@_resolve_location(require_key=True)
 def make_public(*location, bucket=None, key=None, uri=None):
     """
     Makes the object defined by the bucket/key pair (or uri) public.
@@ -1472,6 +1328,7 @@ def make_public(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: The URL of the object
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).make_public()
 
 
@@ -1488,6 +1345,7 @@ def create_bucket(bucket, acl=ACL_PRIVATE, region=None):
     bucket_obj = Bucket(bucket=bucket)
     bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
     bucket_obj.wait_until_exists()
+    return bucket_obj
 
 
 def delete_bucket(bucket):
@@ -1532,10 +1390,10 @@ def download_to_zip(file, bucket, prefix=None, prefixes=None):
     """
     if prefix:
         prefixes = [prefix]
-    with ZipFile(file, 'w') as zfile:
+    with ZipFile(file, 'w') as zf:
         for prefix in prefixes:
             for key in list_objects(bucket, prefix):
-                zfile.writestr(parse.quote(key), data=read(bucket, key))
+                zf.writestr(parse.quote(key.key), data=read(bucket, key))
 
 
 def split_uri(uri):
@@ -1635,7 +1493,6 @@ def _bucket_url(bucket):
         return f'https://{bucket}.s3.amazonaws.com'
 
 
-@_resolve_location()
 def url(*location, bucket=None, key=None, uri=None):
     """
     Returns the public URL of an S3 object or bucket (assuming it's public).
@@ -1645,10 +1502,70 @@ def url(*location, bucket=None, key=None, uri=None):
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
     """
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri, require_key=False)
     if key:
         return _object_url(bucket, key)
     else:
         return _bucket_url(bucket)
+
+
+def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as([o_type], bucket=bucket, key=key, encoding=encoding, newline=newline)
+
+
+def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return iter(read_as(bucket=bucket, key=key, encoding=encoding, newline=newline))
+
+
+def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', use_decoder=False):
+    warnings.warn("Use read_as(dict, ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as(dict, bucket=bucket, key=key, uri=uri, encoding=encoding, use_decoder=use_decoder)
+
+
+def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8'):
+    warnings.warn("Use read_as(str, ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as(str, bucket=bucket, key=key, uri=uri)
+
+
+def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([dict], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as([dict], bucket=bucket, key=key, uri=uri,
+                   encoding=encoding, newline=newline)
+
+
+def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
+    warnings.warn("Use read_as([str], ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return read_as([str], bucket=bucket, key=key, uri=uri,
+                   encoding=encoding, newline=newline)
+
+
+def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, newline='\n', delimiter=',',
+                    columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
+                    content_length=None, metadata=None, sse=None, storage_class=None, tags=None):
+    warnings.warn("Use write_as(row, csv, ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
+                    delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
+                    content_encoding=content_encoding, content_language=content_language, content_length=content_length,
+                    metadata=metadata, sse=sse, storage_class=storage_class, tags=tags)
+
+
+def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n', acl=None, content_type=None,
+                 content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
+                 storage_class=None, tags=None, **params):
+    warnings.warn("Use read_as(iter(<type>), ...)", DeprecationWarning)
+    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    return write(value, bucket=bucket, key=key, uri=uri, newline=newline, acl=acl, content_type=content_type,
+                 content_encoding=content_encoding, content_language=content_language, content_length=content_length,
+                 metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, **params)
 
 
 class ErrorCodes(Enum):
@@ -1734,4 +1651,3 @@ class ErrorCodes(Enum):
     UnexpectedContent = 'UnexpectedContent'
     UnresolvableGrantByEmailAddress = 'UnresolvableGrantByEmailAddress'
     UserKeyMustBeSpecified = 'UserKeyMustBeSpecified'
-

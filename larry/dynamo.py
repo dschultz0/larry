@@ -3,7 +3,7 @@ import boto3
 from larry.core import ResourceWrapper, iterate_through_paginated_items
 import csv
 import itertools
-from collections import Mapping
+from collections.abc import Mapping
 
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()

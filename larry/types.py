@@ -1,4 +1,4 @@
-from collections import Mapping
+from collections.abc import Mapping
 import warnings
 
 
@@ -105,6 +105,7 @@ class Box:
         print(json.dumps(box, cls=JSONEncoder)
     """
     MAX_SCALE = 6
+    _attributes = None
 
     def __init__(self, value, attributes=None):
         if isinstance(value, Box):
@@ -127,8 +128,6 @@ class Box:
                 value.update(attributes)
             self._attributes = {k: v for k, v in value.items()
                                 if k.lower() not in ["coordinates", "left", "top", "width", "height", "__box__"]}
-        else:
-            raise ValueError(f"Invalid value for Box: {value}")
         if len(self._coordinates) != 4:
             raise ValueError("Box coordinates must have exactly four values")
         self._coordinates = [round(c, self.MAX_SCALE) for c in self._coordinates]
@@ -170,8 +169,6 @@ class Box:
         raise AttributeError(f"AttributeError: 'Box' object has no attribute '{item}'")
 
     def __getitem__(self, item):
-        if item in ["coordinates", "top", "left", "width", "height"]:
-            return getattr(self, item)
         if self._attributes and item in self._attributes:
             return self._attributes[item]
         raise KeyError(f"KeyError: '{item}'")
@@ -180,8 +177,6 @@ class Box:
         return item in self._attributes if self._attributes else False
 
     def get(self, key, default=None):
-        if key in ["coordinates", "top", "left", "width", "height"]:
-            return getattr(self, key)
         if self._attributes and key in self._attributes:
             return self._attributes[key]
         return default

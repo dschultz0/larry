@@ -10,7 +10,7 @@ from larry.core.ipython import display_iframe
 from larry.core import is_arn
 from botocore.exceptions import ClientError
 from larry.utils.image import scale_image_to_size
-from collections import Mapping
+from collections.abc import Mapping
 
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()

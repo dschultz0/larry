@@ -5,7 +5,7 @@ import json
 import zlib
 import base64
 from enum import Enum
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 import larry.core
 from larry.mturk.HIT import HIT
@@ -13,7 +13,6 @@ from larry.mturk.Assignment import Assignment
 from larry import utils
 from larry import s3
 from larry.types import Box
-from collections import Mapping
 import datetime
 from larry.core.ipython import display_link, display_iframe
 import uuid
