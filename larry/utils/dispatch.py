@@ -8,6 +8,20 @@ import inspect
 
 
 def larrydispatch(func):
+    """
+    An extension of the singledispatch decorator that allows for registering implementations using additional
+    types and values. This supports the `read_as` and `write_as` functionality implemented in s3 and lmbda by
+    allowing for support of types such as PIL.Image and np.ndarray without the need to install the source package
+    or stubs.
+
+    Supports registering by:
+    * module name ("PIL.Image")
+    * callable name ("imwrite")
+    * type name ("ndarray")
+    * class name ("PngImageFile")
+    * equivalence (str, dict)
+    * value type (basic single dispatch)
+    """
     module_name_registry = {}
     callable_name_registry = {}
     type_name_registry = {}
@@ -121,8 +135,13 @@ def larrydispatch(func):
     return wrapper
 
 
-def dispatchcurry(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled dispatch'), pre_curry=None):
-
+def _dispatchcurry(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled dispatch'), pre_curry=None):
+    """
+    An experimental dispatch approach (not currently used by retained for the time being) that can be used to
+    curry values into a function call by registering functions that will provide curried values to insert the function
+    call based on a value that is passed as an argument. This was ultimately abandoned in favor of using a helper
+    function, but it may have utility in future features.
+    """
     def decorate(func):
         spec = inspect.getfullargspec(func)
 
@@ -186,23 +205,11 @@ def dispatchcurry(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled disp
                 kw.update(curried_values)
                 args, kw = normalize_args(spec, *args, **kw)
             cf = curry.dispatch(args[dispatch_index])
-            #print(dispatch_index)
-            #print(args[dispatch_index])
-            #print(cf)
             cf_spec = inspect.getfullargspec(cf)
-            #print(spec)
-            #print(args)
-            #print(kw)
-            #print(cf_spec)
             cf_args, cf_kw = normalize_args(cf_spec, *args, **kw)
-            #print(cf_args)
-            #print(cf_kw)
             curried_values = cf(*cf_args, **cf_kw)
             kw.update(curried_values)
-            #print(kw)
             args, kw = normalize_args(spec, *args, **kw)
-            #print(args)
-            #print(kw)
             return func(*args, **kw)
 
         funcname = getattr(func, '__name__', 'currydispatch function')
@@ -218,7 +225,7 @@ def dispatchcurry(dispatch_index=0, throw_if_unmatched=TypeError('Unhandled disp
         wrapper.class_name_registry = curry.class_name_registry
         wrapper.eq_registry = curry.eq_registry
         wrapper.registry = curry.registry
-        wrapper._clear_cache = curry._clear_cache
+        #wrapper._clear_cache = curry._clear_cache
         update_wrapper(wrapper, func)
         return wrapper
 
