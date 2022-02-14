@@ -105,6 +105,7 @@ class Box:
         print(json.dumps(box, cls=JSONEncoder)
     """
     MAX_SCALE = 6
+    _attributes = None
 
     def __init__(self, value, attributes=None):
         if isinstance(value, Box):
