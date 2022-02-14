@@ -1,3 +1,4 @@
+import pickle
 import unittest
 import larry as lry
 from larry.types import Box
@@ -205,6 +206,26 @@ class S3Tests(unittest.TestCase):
                 self.assertEqual(oi.format, img.format)
                 o.delete()
 
+    def test_pickle(self):
+        for args, kw in S3Tests._parameter_permutations(bucket=BUCKET, key=PATH_PREFIX + '.pkl'):
+            o = lry.s3.write_as(SIMPLE_DICT, pickle, *args, **kw)
+            self.assertEqual(json_dumps(lry.s3.read_as(pickle, *args, **kw)), json_dumps(SIMPLE_DICT))
+            self.assertEqual(o.content_type, "application/octet-stream")
+            o.delete()
+
+    def test_append(self):
+        for args, kw in S3Tests._parameter_permutations(bucket=BUCKET, key=PATH_PREFIX + "append.txt"):
+            o = lry.s3.write("Header", *args, **kw)
+            for v in SIMPLE_LIST:
+                lry.s3.append_as(v, str, *args, **kw, prefix="\n")
+            self.assertTrue(lry.s3.read_as(str, *args, **kw), "\n".join(["Header"]+SIMPLE_LIST))
+            o.delete()
+            o = lry.s3.write("Header", *args, **kw)
+            for v in SIMPLE_LIST:
+                lry.s3.append(v, *args, **kw, prefix="\n")
+            self.assertTrue(lry.s3.read_as(str, *args, **kw), "\n".join(["Header"]+SIMPLE_LIST))
+            o.delete()
+
     def test_bucket(self):
         bucket1 = 'larry-testing-create1'
         bucket2 = 'larry-testing-create2'
@@ -218,6 +239,20 @@ class S3Tests(unittest.TestCase):
         self.assertEqual('us-west-1',
                          lry.s3.resource.meta.client.get_bucket_location(Bucket=bucket2)['LocationConstraint'])
         lry.s3.delete_bucket(bucket2)
+
+    def test_cors(self):
+        b = lry.s3.Bucket(BUCKET)
+        self.assertIsNone(b.cors)
+        b.cors = lry.s3.CorsRule.default()
+        self.assertEqual([rule.to_dict() for rule in b.cors], [lry.s3.CorsRule.default().to_dict()])
+        b.cors = lry.s3.CorsRule.default().to_dict()
+        self.assertEqual([rule.to_dict() for rule in b.cors], [lry.s3.CorsRule.default().to_dict()])
+        b.cors = [lry.s3.CorsRule.default()]
+        self.assertEqual([rule.to_dict() for rule in b.cors], [lry.s3.CorsRule.default().to_dict()])
+        b.cors = [lry.s3.CorsRule.default().to_dict()]
+        self.assertEqual([rule.to_dict() for rule in b.cors], [lry.s3.CorsRule.default().to_dict()])
+        del b.cors
+        self.assertIsNone(b.cors)
 
 
 if __name__ == '__main__':
