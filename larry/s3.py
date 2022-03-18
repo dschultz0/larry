@@ -552,14 +552,14 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
-    return csv.reader(StringIO(objct), **kwargs)
+    return csv.reader(StringIO(objct.decode(encoding)), **kwargs)
 
 
 @read_as.register_eq(csv.DictReader)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
     bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
-    return csv.DictReader(StringIO(objct), **kwargs)
+    return csv.DictReader(StringIO(objct.decode(encoding)), **kwargs)
 
 
 @read_as.register_eq(pickle)
