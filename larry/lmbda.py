@@ -1,6 +1,6 @@
 import larry.core
 from larry import utils
-from larry.s3 import split_uri
+from larry import s3
 import boto3
 import inspect
 import zipfile
@@ -77,7 +77,8 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(
+        **larry.core.copy_non_null_keys(locals()))
     client = __session.client('lambda')
 
 
@@ -132,12 +133,15 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
         'Handler': handler,
         'Publish': publish
     }
-    # If the package is an S3 URI use that, else treat it as a zipfile
-    (bucket, key) = split_uri(package)
-    if bucket is None or key is None:
-        params['Code'] = {'ZipFile': package}
-    else:
+
+    # Handle the package as an S3 uri or Object, or a zipfile
+    if isinstance(package, str):
+        bucket, key = s3.split_uri(package)
         params['Code'] = {'S3Bucket': bucket, 'S3Key': key}
+    elif isinstance(package, s3.Object):
+        params['Code'] = {'S3Bucket': package.bucket_name, 'S3Key': package.key}
+    else:
+        params['Code'] = {'ZipFile': package}
 
     if description:
         params['Description'] = description
@@ -341,12 +345,15 @@ def update_code(name, package, publish=True, dry_run=False, await_updated=False)
     })
 
     # If the package is an S3 URI use that, else treat it as a zipfile
-    (bucket, key) = split_uri(package)
-    if bucket is None or key is None:
-        params['ZipFile'] = package
-    else:
+    if isinstance(package, str):
+        bucket, key = s3.split_uri(package)
         params['S3Bucket'] = bucket
         params['S3Key'] = key
+    elif isinstance(package, s3.Object):
+        params['S3Bucket'] = package.bucket
+        params['S3Key'] = package.key
+    else:
+        params['ZipFile'] = package
 
     lmbda = Lambda.from_create(client.update_function_code(**params))
     if await_updated:
@@ -511,11 +518,11 @@ def _get_function_calls(func, built_ins=False):
 
             # parse argument list (Python2)
             if inst.arg == 257:
-                k = i+1
+                k = i + 1
                 while k < len(ins) and ins[k].opname != "BUILD_LIST":
                     k += 1
 
-                ep = k-1
+                ep = k - 1
 
             # LOAD that loaded this function
             entry = ins[ep]

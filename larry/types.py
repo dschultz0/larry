@@ -43,7 +43,7 @@ class ClientError(Exception):
         .. code-block:: python
 
             try:
-                data = lry.s3.read_str('s3://my-bucket/does_not_exist.txt')
+                data = lry.s3.read_as(str, 's3://my-bucket/does_not_exist.txt')
             except lry.ClientException as e:
                 if e.code == '404':
                     #do something

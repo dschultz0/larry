@@ -33,7 +33,6 @@ setuptools.setup(
     url="https://github.com/dschultz0/larry",
     packages=setuptools.find_packages(exclude=['test']),
     include_package_data=False,
-    install_requires=["boto3>=1.10"],
     keywords="larry data aws boto3 mturk s3",
     classifiers=[
         "Programming Language :: Python :: 3",

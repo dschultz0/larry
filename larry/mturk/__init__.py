@@ -711,8 +711,8 @@ def prepare_requester_annotation(payload, bucket_identifier=None):
                 return json.dumps({'payloadBytes': compressed}, separators=(',', ':'))
             else:
                 # Else post it to s3
-                uri = s3.write_temp_object(payload, 'mturk_requester_annotation/',
-                                           bucket_identifier=bucket_identifier)
+                uri = s3.write_temp(payload, 'mturk_requester_annotation/',
+                                    bucket_identifier=bucket_identifier).uri
                 return json.dumps({'payloadURI': uri}, separators=(',', ':'))
     else:
         raise Exception('Annotation value must be a string or dict')
@@ -739,7 +739,7 @@ def parse_requester_annotation(content, delete_temp_file=False):
             elif 'payloadBytes' in content:
                 return json.loads(zlib.decompress(base64.b85decode(content['payloadBytes'].encode())))
             elif 'payloadURI' in content:
-                results = s3.read_dict(uri=content['payloadURI'])
+                results = s3.read_as(dict, uri=content['payloadURI'])
                 if delete_temp_file:
                     s3.delete(uri=content['payloadURI'])
                 return results
@@ -830,7 +830,7 @@ def render_jinja_template(arguments, template=None, template_uri=None):
     try:
         from jinja2 import Template
         if template_uri:
-            template = s3.read_str(uri=template_uri)
+            template = s3.read_as(str, template_uri)
         jinja_template = Template(template)
         jinja_template.environment.policies['json.dumps_kwargs'] = {'cls': utils.JSONEncoder}
         return jinja_template.render(arguments)

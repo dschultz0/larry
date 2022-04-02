@@ -110,8 +110,8 @@ def set_session(aws_access_key_id=None,
     __resource = __session.resource('s3')
 
 
-def _normalize_location(*location, uri: str = None, bucket: str = None, key: str = None,
-                        require_bucket=True, require_key=True, key_arg='key', allow_multiple=False):
+def normalize_location(*location, uri: str = None, bucket: str = None, key: str = None,
+                       require_bucket=True, require_key=True, key_arg='key', allow_multiple=False):
     if not any([uri, bucket, key]):
         if len(location) == 0:
             raise TypeError('A location must be specified')
@@ -187,7 +187,7 @@ class Object(ResourceWrapper):
     """
 
     def __init__(self, *location, bucket=None, key=None, uri=None):
-        bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+        bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
         super().__init__(Bucket(bucket).Object(key=key))
 
     @property
@@ -390,7 +390,7 @@ def delete(*location, bucket=None, key=None, uri=None):
     :param key: The key of the object, this can be a single str value or a list of keys to delete
     :param uri: An s3:// path containing the bucket and key of the object
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     if isinstance(key, list):
         Bucket(bucket=bucket).delete_objects(Delete={'Objects': [{'Key': k} for k in key], 'Quiet': True})
     else:
@@ -407,7 +407,7 @@ def size(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: Size in bytes
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).content_length
 
 
@@ -421,7 +421,7 @@ def get_content_type(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: A standard MIME type describing the format of the object data.
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).content_type
 
 
@@ -436,7 +436,7 @@ def read(*location, bucket=None, key=None, uri=None, byte_count=None):
     :param byte_count: The max number of bytes to read from the object. All data is read if omitted.
     :return: The bytes contained in the object
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).get()['Body'].read(byte_count)
 
 
@@ -466,7 +466,7 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
 @read_as.register_module_name("numpy")
 @read_as.register_type_name("ndarray")
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     try:
         import numpy as np
         with tempfile.TemporaryFile() as fp:
@@ -481,7 +481,7 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 @read_as.register_module_name("cv2")
 @read_as.register_callable_name("imread")
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     fp = None
     try:
         fp = tempfile.NamedTemporaryFile(delete=False)
@@ -500,7 +500,7 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 @read_as.register_eq(json)
 @read_as.register_eq(dict)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
 
     try:
@@ -515,14 +515,14 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 
 @read_as.register_eq(str)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return objct.decode(encoding)
 
 
 @read_as.register_module_name("PIL.Image")
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return type_.open(BytesIO(objct))
 
@@ -530,7 +530,7 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 @read_as.register_eq([dict])
 @read_as.register_eq([json])
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     lines = objct.decode(encoding).split(kwargs.get("newline", DEFAULT_NEWLINE))
     if kwargs.get("use_decoder"):
@@ -541,7 +541,7 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 
 @read_as.register_eq([str])
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     lines = objct.decode(encoding).split(kwargs.get("newline", DEFAULT_NEWLINE))
     return [line for line in lines if len(line) > 0]
@@ -550,21 +550,21 @@ def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwa
 @read_as.register_eq(csv)
 @read_as.register_eq(csv.reader)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return csv.reader(StringIO(objct.decode(encoding)), **kwargs)
 
 
 @read_as.register_eq(csv.DictReader)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return csv.DictReader(StringIO(objct.decode(encoding)), **kwargs)
 
 
 @read_as.register_eq(pickle)
 def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     objct = read(bucket=bucket, key=key, uri=uri)
     return pickle.loads(objct, **kwargs)
 
@@ -730,7 +730,7 @@ def write_as(value, _type, *location, bucket=None, key=None, uri=None, acl=None,
     :param encoding: The byte encoding to use for str values.
     :return: The URI of the object written to S3
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     value, content_type = format_type_for_write(_type, value, key, content_type)
     return _write(value, bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                   content_encoding=content_encoding, content_language=content_language,
@@ -803,7 +803,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, encoding=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return _write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                   content_encoding=content_encoding, content_language=content_language,
                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
@@ -814,7 +814,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, encoding=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     value.seek(0)
     return _write(value.getvalue(), bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                   content_encoding=content_encoding, content_language=content_language,
@@ -826,7 +826,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, encoding=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return _write('', bucket=bucket, key=key, uri=uri, acl=acl, content_type=content_type,
                   content_encoding=content_encoding, content_language=content_language,
                   content_length=content_length, metadata=metadata, sse=sse, storage_class=storage_class,
@@ -838,7 +838,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, encoding=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     content_type = __recommend_content_type(content_type, key, "text/plain")
     buff = StringIO()
     for row in value:
@@ -860,7 +860,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
       content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
       storage_class=None, tags=None, encoding=None, **kwargs):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     content_type, fmt = __get_pillow_format(value, content_type, key, **kwargs)
     objct = BytesIO()
     value.save(objct, fmt)
@@ -950,7 +950,7 @@ def append_as(value, _type, *location, bucket=None, key=None, uri=None, prefix=N
     :param suffix: Value to attach to the end of the value such as "\n"
     :param encoding: Encoding to use when writing str to bytes
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     value, content_type = format_type_for_write(_type, value, key, None)
     __append(value, bucket=bucket, key=key, prefix=prefix, suffix=suffix, encoding=encoding)
 
@@ -973,7 +973,7 @@ def append(value, *location, bucket=None, key=None, uri=None, prefix=None, suffi
     :param suffix: Value to attach to the end of the value such as "\n"
     :param encoding: Encoding to use when writing str to bytes
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     __append(value, bucket=bucket, key=key, prefix=prefix, suffix=suffix)
 
 
@@ -1060,7 +1060,7 @@ def exists(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: True if the key exists, if not, False
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).exists
 
 
@@ -1075,8 +1075,8 @@ def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_ob
     :param include_empty_objects: True if you want to include keys associated with objects of size=0
     :return: A generator of s3 Objects
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=prefix, uri=uri,
-                                           key_arg="prefix", require_key=False)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=prefix, uri=uri,
+                                          key_arg="prefix", require_key=False)
     paginator = _get_resource().meta.client.get_paginator('list_objects_v2')
     operation_parameters = {'Bucket': bucket}
     if prefix:
@@ -1183,7 +1183,7 @@ def fetch(url, *location, bucket=None, key=None, uri=None, content_type=None, co
     :param incl_user_agent: If true, a user agent string will be added as a header to the request
     :return: The URI of the object written to S3
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     if incl_user_agent:
         if "headers" in kwargs:
             kwargs["headers"]["User-Agent"] = utils.user_agent()
@@ -1209,7 +1209,7 @@ def download(file, *location, bucket=None, key=None, uri=None, use_threads=True)
     :param use_threads: Enables the use_threads transfer config
     :return: Path of the local file
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     config = TransferConfig(use_threads=use_threads)
     objct = Object(bucket=bucket, key=key)
     if isinstance(file, str):
@@ -1233,7 +1233,7 @@ def download_to_temp(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: A file pointer to the temp file
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     fp = tempfile.TemporaryFile()
     download(fp, bucket=bucket, key=key, uri=uri)
     fp.seek(0)
@@ -1241,7 +1241,7 @@ def download_to_temp(*location, bucket=None, key=None, uri=None):
 
 
 def generate_presigned_get(*location, bucket=None, key=None, uri=None, expires_in=None, http_method=None):
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     params = {
         "ClientMethod": "get_object",
         "Params": {"Bucket": bucket, "Key": key}
@@ -1276,7 +1276,7 @@ def upload(file, *location, bucket=None, key=None, uri=None, acl=None, content_t
     :param tags: The tag-set for the object. Can be either a dict or url encoded key/value string.
     :return: The uri of the file in S3
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     extra = larry.core.map_parameters(locals(), {
         'acl': 'ACL',
         'content_encoding': 'ContentEncoding',
@@ -1328,7 +1328,7 @@ def make_public(*location, bucket=None, key=None, uri=None):
     :param uri: An s3:// path containing the bucket and key of the object
     :return: The URL of the object
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return Object(bucket=bucket, key=key).make_public()
 
 
@@ -1502,7 +1502,7 @@ def url(*location, bucket=None, key=None, uri=None):
     :param key: The key of the object
     :param uri: An s3:// path containing the bucket and key of the object
     """
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri, require_key=False)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri, require_key=False)
     if key:
         return _object_url(bucket, key)
     else:
@@ -1511,38 +1511,38 @@ def url(*location, bucket=None, key=None, uri=None):
 
 def read_list_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
     warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return read_as([o_type], bucket=bucket, key=key, encoding=encoding, newline=newline)
 
 
 def read_iter_as(o_type, *location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
     warnings.warn("Use read_as([<type>], ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return iter(read_as(bucket=bucket, key=key, encoding=encoding, newline=newline))
 
 
 def read_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', use_decoder=False):
     warnings.warn("Use read_as(dict, ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return read_as(dict, bucket=bucket, key=key, uri=uri, encoding=encoding, use_decoder=use_decoder)
 
 
 def read_str(*location, bucket=None, key=None, uri=None, encoding='utf-8'):
     warnings.warn("Use read_as(str, ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return read_as(str, bucket=bucket, key=key, uri=uri)
 
 
 def read_list_of_dict(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
     warnings.warn("Use read_as([dict], ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return read_as([dict], bucket=bucket, key=key, uri=uri,
                    encoding=encoding, newline=newline)
 
 
 def read_list_of_str(*location, bucket=None, key=None, uri=None, encoding='utf-8', newline='\n'):
     warnings.warn("Use read_as([str], ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return read_as([str], bucket=bucket, key=key, uri=uri,
                    encoding=encoding, newline=newline)
 
@@ -1551,7 +1551,7 @@ def write_delimited(rows, *location, bucket=None, key=None, uri=None, acl=None, 
                     columns=None, headers=None, content_type=None, content_encoding=None, content_language=None,
                     content_length=None, metadata=None, sse=None, storage_class=None, tags=None):
     warnings.warn("Use write_as(row, csv, ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return write_as(rows, csv, bucket=bucket, key=key, uri=uri, acl=acl, newline=newline,
                     delimiter=delimiter, columns=columns, headers=headers, content_type=content_type,
                     content_encoding=content_encoding, content_language=content_language, content_length=content_length,
@@ -1562,7 +1562,7 @@ def write_object(value, *location, bucket=None, key=None, uri=None, newline='\n'
                  content_encoding=None, content_language=None, content_length=None, metadata=None, sse=None,
                  storage_class=None, tags=None, **params):
     warnings.warn("Use read_as(iter(<type>), ...)", DeprecationWarning)
-    bucket, key, uri = _normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return write(value, bucket=bucket, key=key, uri=uri, newline=newline, acl=acl, content_type=content_type,
                  content_encoding=content_encoding, content_language=content_language, content_length=content_length,
                  metadata=metadata, sse=sse, storage_class=storage_class, tags=tags, **params)

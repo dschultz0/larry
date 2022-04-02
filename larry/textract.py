@@ -1,5 +1,5 @@
 from larry.core import copy_non_null_keys
-from larry.s3 import split_uri
+from larry import s3
 from larry.types import Box
 import boto3
 import io
@@ -42,7 +42,8 @@ def __get_client():
     return __client
 
 
-def detect_text(file=None, image=None, bucket=None, key=None, uri=None):
+def detect_text(*location, bucket=None, key=None, uri=None, file=None, image=None):
+    bucket, key, uri = s3.normalize_location(*location, bucket=bucket, key=key, uri=uri)
     document = {}
     params = {'Document': document}
     if file:
@@ -61,16 +62,15 @@ def detect_text(file=None, image=None, bucket=None, key=None, uri=None):
             file.save(objct, format='PNG')
             objct.seek(0)
             document['Bytes'] = file.read()
-    (bucket, key) = split_uri(uri) if uri else (bucket, key)
     if bucket and key:
         document['S3Object'] = {'Bucket': bucket, 'Name': key}
     response = __client.detect_document_text(**params)
     return response
 
 
-def detect_lines(file=None, image=None, bucket=None, key=None, uri=None, size=None, width=None, height=None):
+def detect_lines(*location, bucket=None, key=None, uri=None, file=None, image=None, size=None, width=None, height=None):
     (width, height) = size if size else (width, height)
-    blocks = detect_text(file=file, image=image, bucket=bucket, key=key, uri=uri)['Blocks']
+    blocks = detect_text(*location, bucket=bucket, key=key, uri=uri, file=file, image=image)['Blocks']
     return [_block_to_box(element, width, height) for element in blocks if element['BlockType'] == 'LINE']
 
 
@@ -101,8 +101,8 @@ def _block_to_box(block, width, height, page_indices=None):
                                        confidence=block['Confidence'])
 
 
-def start_text_detection(bucket=None, key=None, uri=None):
-    (bucket, key) = split_uri(uri) if uri else (bucket, key)
+def start_text_detection(*location, bucket=None, key=None, uri=None):
+    bucket, key, uri = s3.normalize_location(*location, bucket=bucket, key=key, uri=uri)
     return __client.start_document_text_detection(DocumentLocation={
         'S3Object': {
             'Bucket': bucket,

@@ -119,10 +119,10 @@ class labeling:
         # if this isn't template html attempt to treat it as a file (s3 or local)
         if '<' not in template or '>' not in template:
 
-            # If the template is a uri use that
+            # If the template is a uri, use that
             parts = s3.split_uri(template)
             if parts[0] is not None and parts[1] is not None:
-                template = s3.read_str(template)
+                template = s3.read_as(str, template)
 
             # else try to open it like a file
             else:
@@ -139,8 +139,8 @@ class labeling:
             template_input = json.dumps(template_input)
 
         result = _get_client().render_ui_template(UiTemplate={'Content': template},
-                                           Task={'Input': template_input},
-                                           RoleArn=role)
+                                                  Task={'Input': template_input},
+                                                  RoleArn=role)
         return result['RenderedContent'], result.get('Errors')
 
     @staticmethod
@@ -182,7 +182,7 @@ class labeling:
             consolidation_lambda = lmbda.get(consolidation_lambda)['FunctionArn']
         config = {
             'UiConfig': {
-                'UiTemplateS3Uri': template_uri
+                'UiTemplateS3Uri': template_uri.uri if isinstance(template_uri, s3.Object) else template_uri
             },
             'PreHumanTaskLambdaArn': pre_lambda,
             'TaskTitle': title,
@@ -258,13 +258,18 @@ class labeling:
         params = {
             'LabelingJobName': name,
             'LabelAttributeName': label_attribute_name,
-            'InputConfig': labeling._input_config(manifest_uri, free_of_pii, free_of_adult_content),
-            'OutputConfig': labeling._output_config(output_uri),
+            'InputConfig': labeling._input_config(
+                manifest_uri.uri if isinstance(manifest_uri, s3.Object) else manifest_uri,
+                free_of_pii,
+                free_of_adult_content),
+            'OutputConfig': labeling._output_config(
+                output_uri.uri if isinstance(output_uri, s3.Object) else output_uri),
             'RoleArn': role_arn,
             'HumanTaskConfig': task_config
         }
         if category_config_uri:
-            params['LabelCategoryConfigS3Uri'] = category_config_uri
+            params['LabelCategoryConfigS3Uri'] = category_config_uri.uri if isinstance(category_config_uri,
+                                                                                       s3.Object) else category_config_uri
         if algorithms_config:
             params['LabelingJobAlgorithmsConfig'] = algorithms_config
         if stopping_conditions:
@@ -283,15 +288,16 @@ class labeling:
         unlabeled = response['LabelCounters']['Unlabeled']
         failed = response['LabelCounters']['FailedNonRetryableError']
         fail_message = ' {} failed'.format(failed) if failed > 0 else ''
-        return "{} ({}/{})".format(status, labeled, unlabeled + labeled)+fail_message
+        return "{} ({}/{})".format(status, labeled, unlabeled + labeled) + fail_message
 
     @staticmethod
     def get_worker_responses(output_uri, job_name):
         by_worker = {}
         by_item = {}
+        output_uri = output_uri.uri if isinstance(output_uri, s3.Object) else output_uri
         bucket_name, k = s3.split_uri(output_uri)
         for response_key in s3.list_objects(uri=posixpath.join(output_uri, job_name, 'annotations/worker-response')):
-            response_obj = s3.read_dict(bucket_name, response_key)
+            response_obj = s3.read_as(dict, bucket_name, response_key)
             item_id = response_key.split('/')[-2]
             by_item[item_id] = response_obj
             for response in response_obj['answers']:
@@ -308,8 +314,9 @@ class labeling:
 
     @staticmethod
     def get_results(output_uri, job_name):
+        output_uri = output_uri.uri if isinstance(output_uri, s3.Object) else output_uri
         try:
-            return s3.read_list_of_dict(uri=posixpath.join(output_uri, job_name, 'manifests/output/output.manifest'))
+            return s3.read_as([dict], uri=posixpath.join(output_uri, job_name, 'manifests/output/output.manifest'))
         except ClientError as e:
             if e.response['Error']['Code'] == 'NoSuchKey':
                 return []
@@ -334,7 +341,7 @@ class labeling:
         failures = []
         reasons = {}
         for item in manifest:
-            failure_reason = item[attribute_name+'-metadata'].get('failure-reason')
+            failure_reason = item[attribute_name + '-metadata'].get('failure-reason')
             if failure_reason:
                 failures.append(item)
                 failure_reason = failure_reason.replace(item['source-ref'], '<file>')
@@ -416,7 +423,7 @@ class labeling:
                     (bucket, key_prefix) = s3.split_uri(uri_prefix)
                 if key_prefix is None:
                     key_prefix = 'labeling_temp_images/'
-                uri = s3.write_temp_object(img, key_prefix, bucket=bucket)
+                uri = s3.write_temp(img, key_prefix, bucket=bucket).uri
                 new_item['original-source-ref'] = new_item.pop('source-ref')
                 new_item['source-ref'] = uri
                 new_item['scalar'] = scalar
