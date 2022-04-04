@@ -8,7 +8,7 @@ from larry import s3
 from larry import lmbda
 from larry.core.ipython import display_iframe
 from larry.core import is_arn
-from botocore.exceptions import ClientError
+from larry.types import ClientError
 from larry.utils.image import scale_image_to_size
 from collections.abc import Mapping
 
