@@ -42,42 +42,45 @@ def __get_client():
     return __client
 
 
-def detect_text(*location, bucket=None, key=None, uri=None, file=None, image=None):
-    bucket, key, uri = s3.normalize_location(*location, bucket=bucket, key=key, uri=uri)
+def detect_text(*location, bucket=None, key=None, uri=None):
     document = {}
     params = {'Document': document}
-    if file:
-        if isinstance(file, str):
-            with open(file, 'rb') as fp:
+    if len(location) == 1 and not s3.is_uri(location[0]):
+        item = location[0]
+        if isinstance(item, str):
+            with open(item, 'rb') as fp:
                 document['Bytes'] = fp.read()
-        elif isinstance(file, io.RawIOBase) or isinstance(file, io.BufferedIOBase):
-            document['Bytes'] = file.read()
-        else:
-            raise TypeError('Unexpected file of type {}'.format(type(file)))
-    if image:
-        if isinstance(image, bytes):
-            document['Bytes'] = image
-        elif hasattr(image, 'save') and callable(getattr(image, 'save', None)):
+        elif isinstance(item, io.RawIOBase) or isinstance(item, io.BufferedIOBase):
+            document['Bytes'] = item.read()
+        elif isinstance(item, bytes):
+            document['Bytes'] = item
+        elif hasattr(item, 'save') and callable(getattr(item, 'save', None)):
             objct = io.BytesIO()
-            file.save(objct, format='PNG')
+            item.save(objct, format='PNG')
             objct.seek(0)
-            document['Bytes'] = file.read()
-    if bucket and key:
-        document['S3Object'] = {'Bucket': bucket, 'Name': key}
+            document['Bytes'] = item.read()
+        else:
+            raise TypeError('Unexpected value of type {}'.format(type(item)))
+    else:
+        bucket, key, uri = s3.normalize_location(*location, bucket=bucket, key=key, uri=uri)
+        if bucket and key:
+            document['S3Object'] = {'Bucket': bucket, 'Name': key}
+        else:
+            raise TypeError("Invalid s3 location")
     response = __client.detect_document_text(**params)
     return response
 
 
-def detect_lines(*location, bucket=None, key=None, uri=None, file=None, image=None, size=None, width=None, height=None):
+def detect_lines(*location, bucket=None, key=None, uri=None, size=None, width=None, height=None):
     (width, height) = size if size else (width, height)
-    blocks = detect_text(*location, bucket=bucket, key=key, uri=uri, file=file, image=image)['Blocks']
+    blocks = detect_text(*location, bucket=bucket, key=key, uri=uri)['Blocks']
     return [_block_to_box(element, width, height) for element in blocks if element['BlockType'] == 'LINE']
 
 
 def _block_to_box(block, width, height, page_indices=None):
     if page_indices and len(page_indices) > 1:
         page = block['Page']
-        indices = page_indices[page-1]
+        indices = page_indices[page - 1]
         # Extend from 2 value to 4 value if necessary
         if len(indices) == 2:
             if page == len(page_indices):
@@ -101,14 +104,22 @@ def _block_to_box(block, width, height, page_indices=None):
                                        confidence=block['Confidence'])
 
 
-def start_text_detection(*location, bucket=None, key=None, uri=None):
+def start_text_detection(*location, bucket=None, key=None, uri=None, sns_topic_arn=None, sns_role_arn=None):
     bucket, key, uri = s3.normalize_location(*location, bucket=bucket, key=key, uri=uri)
-    return __client.start_document_text_detection(DocumentLocation={
-        'S3Object': {
-            'Bucket': bucket,
-            'Name': key
+    params = {
+        "DocumentLocation": {
+            'S3Object': {
+                'Bucket': bucket,
+                'Name': key
+            }
         }
-    }).get('JobId')
+    }
+    if sns_topic_arn and sns_role_arn:
+        params["NotificationChannel"] = {
+            'SNSTopicArn': sns_topic_arn,
+            'RoleArn': sns_role_arn
+        }
+    return __client.start_document_text_detection(**params).get('JobId')
 
 
 def get_detected_text_detail(job_id):

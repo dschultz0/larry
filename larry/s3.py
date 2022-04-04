@@ -1410,6 +1410,14 @@ def split_uri(uri):
     return None, None
 
 
+def is_uri(uri):
+    if isinstance(uri, str):
+        m = URI_REGEX.match(uri)
+        if m:
+            return True
+    return False
+
+
 def uri_bucket(uri):
     """
     Retrieve the bucket portion from an S3 URI
