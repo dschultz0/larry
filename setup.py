@@ -2,11 +2,13 @@ import setuptools
 import os
 from pkg_resources import parse_version
 
+mode = os.environ.get("LARRY_RELEASE_MODE", "pre")
+print(mode)
+
 pre_version = parse_version(os.listdir("pre")[0].split("-")[1])
 rel_version = parse_version(os.listdir("rel")[0].split("-")[1])
-pre_mode = True
 
-if pre_mode:
+if mode == "pre":
     if pre_version > rel_version:
         p = pre_version.pre
         version = pre_version.base_version + p[0] + str(p[1]+1)
