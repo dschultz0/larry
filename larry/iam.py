@@ -262,7 +262,16 @@ def detach_policies_from_role(name):
         r.detach_policy(PolicyArn=p.arn)
 
 
-class aws_policies:
+def aws_policies():
+    return __resource.policies.filter(Scope="AWS")
+
+
+def aws_policy_defaults():
+    for p in aws_policies():
+        yield p.default_version
+
+
+class AWSPolicies:
     AWSDirectConnectReadOnlyAccess = 'arn:aws:iam::aws:policy/AWSDirectConnectReadOnlyAccess'
     AmazonGlacierReadOnlyAccess = 'arn:aws:iam::aws:policy/AmazonGlacierReadOnlyAccess'
     AWSMarketplaceFullAccess = 'arn:aws:iam::aws:policy/AWSMarketplaceFullAccess'
