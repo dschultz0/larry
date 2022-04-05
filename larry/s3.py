@@ -678,7 +678,8 @@ def _(_type, value, key=None, content_type=None, **kwargs):
 
 
 def __get_pillow_format(value, content_type, key, **kwargs):
-    content_type = __recommend_content_type(content_type, key, value.get_format_mimetype())
+    mimetype = value.get_format_mimetype() if hasattr(value, "get_format_mimetype") else None
+    content_type = __recommend_content_type(content_type, key, mimetype)
     fmt = kwargs.get("format", value.format)
     if fmt is None:
         fmt = __content_type_to_pillow_format.get(content_type, "PNG")
@@ -855,6 +856,7 @@ def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=
 
 @write.register_class_name("PngImageFile")
 @write.register_class_name("JpegImageFile")
+@write.register_class_name("Image")
 # TODO: Add the rest; better option?
 # TODO: Consider other ways to pass this to the write_as option. The problem is that the Image object isn't available to pass directly from here
 def _(value, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
