@@ -366,6 +366,12 @@ class Box:
             return Box([c[0] - x, c[1] - y, c[2] - x, c[3] - y], self._attributes)
         raise ValueError("Invalid value to subtract from a Box")
 
+    def __gt__(self, other):
+        return self.coordinates[1] > other.coordinates[1]
+
+    def __lt__(self, other):
+        return self.coordinates[1] < other.coordinates[1]
+
     def __radd__(self, other):
         return self.copy(True) if other == 0 else self + other
 
