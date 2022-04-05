@@ -153,6 +153,14 @@ class Box:
         return round(self._coordinates[3] - self._coordinates[1], self.MAX_SCALE)
 
     @property
+    def bottom(self):
+        return self._coordinates[3]
+
+    @property
+    def right(self):
+        return self._coordinates[2]
+
+    @property
     def attributes(self):
         return self._attributes
 
@@ -367,10 +375,10 @@ class Box:
         raise ValueError("Invalid value to subtract from a Box")
 
     def __gt__(self, other):
-        return self.coordinates[1] > other.coordinates[1]
+        return self.top > other.top
 
     def __lt__(self, other):
-        return self.coordinates[1] < other.coordinates[1]
+        return self.top < other.top
 
     def __radd__(self, other):
         return self.copy(True) if other == 0 else self + other
