@@ -13,7 +13,7 @@ if mode == "pre":
         p = pre_version.pre
         version = pre_version.base_version + p[0] + str(p[1]+1)
     else:
-        version = rel_version.base_version + "a0"
+        version = f"{rel_version.major}.{rel_version.minor}.{rel_version.micro+1}a0"
 else:
     version = f"{rel_version.major}.{rel_version.minor}.{rel_version.micro+1}"
 
