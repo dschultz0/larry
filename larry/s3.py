@@ -465,14 +465,15 @@ def read_as(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8',
 
 @read_as.register_module_name("numpy")
 @read_as.register_type_name("ndarray")
-def _(type_, *location, bucket=None, key=None, uri=None, encoding='utf-8', **kwargs):
+def _(type_, *location, bucket=None, key=None, uri=None, encoding='ASCII', **kwargs):
     bucket, key, uri = normalize_location(*location, bucket=bucket, key=key, uri=uri)
+    kw = {k: v for k, v in kwargs.items() if k in ["mmap_mode", "allow_pickle", "fix_imports"]}
     try:
         import numpy as np
         with tempfile.TemporaryFile() as fp:
             download(fp, bucket=bucket, key=key, uri=uri)
             fp.seek(0)
-            return np.fromfile(fp)
+            return np.load(fp, encoding=encoding, **kw)
     except ImportError as ex:
         # Simply raise the ImportError to let the user know this requires Numpy to function
         raise ex
@@ -698,11 +699,16 @@ def _(_type, value, key=None, content_type=None, **kwargs):
 @format_type_for_write.register_type_name("ndarray")
 @format_type_for_write.register_class_name("ndarray")
 def _(_type, value, key=None, content_type=None, **kwargs):
-    kw = {k: v for k, v in kwargs.items() if k in ["sep", "format"]}
-    with tempfile.TemporaryFile() as fp:
-        value.tofile(fp, **kw)
-        fp.seek(0)
-        return fp.file.read(), None
+    kw = {k: v for k, v in kwargs.items() if k in ["allow_pickle", "fix_imports"]}
+    try:
+        import numpy as np
+        with tempfile.TemporaryFile() as fp:
+            np.save(fp, value, **kw)
+            fp.seek(0)
+            return fp.read(), None
+    except ImportError as ex:
+        # Simply raise the ImportError to let the user know this requires Numpy to function
+        raise ex
 
 
 def write_as(value, _type, *location, bucket=None, key=None, uri=None, acl=None, content_type=None,
