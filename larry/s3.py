@@ -623,7 +623,7 @@ def _(_type, value, key=None, content_type=None, **kwargs):
         os.close(handle)
         if os.path.exists(filepath):
             os.remove(filepath)
-    return {"value": result, "content_type": content_type}
+    return result, content_type
 
 
 @format_type_for_write.register_eq(str)
