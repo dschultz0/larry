@@ -4,8 +4,7 @@ import posixpath
 import base64
 
 from larry.core import copy_non_null_keys
-from larry import s3
-from larry import lmbda
+from larry import s3, iam, lmbda
 from larry.core.ipython import display_iframe
 from larry.core import is_arn
 from larry.types import ClientError
@@ -90,6 +89,8 @@ class labeling:
         :param height: The height in pixels of the iframe
         :return: A tuple containing the rendered HTML and any errors.
         """
+        if not is_arn(role):
+            role = iam.role(role).arn
         html, errors = labeling.render_ui_template(template, role=role, template_input=template_input,
                                                    pre_lambda=pre_lambda, lambda_input=lambda_input)
         if errors and len(errors) > 0:
@@ -115,6 +116,8 @@ class labeling:
         :param client: Sagemaker client to use in place of the default value
         :return: A tuple containing the rendered HTML and any errors.
         """
+        if not is_arn(role):
+            role = iam.role(role).arn
 
         # if this isn't template html attempt to treat it as a file (s3 or local)
         if '<' not in template or '>' not in template:
@@ -255,6 +258,8 @@ class labeling:
                    stopping_conditions=None):
         if label_attribute_name is None:
             label_attribute_name = name
+        if not is_arn(role_arn):
+            role = iam.role(role_arn).arn
         params = {
             'LabelingJobName': name,
             'LabelAttributeName': label_attribute_name,

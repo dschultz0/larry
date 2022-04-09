@@ -1,6 +1,6 @@
 import larry.core
-from larry import utils
-from larry import s3
+from larry import utils, iam, s3
+from larry.core import is_arn
 import boto3
 import inspect
 import zipfile
@@ -133,6 +133,8 @@ def create(name, package, handler, role, runtime=RUNTIME_PYTHON_3_8, timeout=Non
         'Handler': handler,
         'Publish': publish
     }
+    if not is_arn(role):
+        params["Role"] = iam.role(role).arn
 
     # Handle the package as an S3 uri or Object, or a zipfile
     if isinstance(package, str):
@@ -311,6 +313,8 @@ def create_or_update(name, package=None, handler=None, role=None, runtime=None, 
     """
     # TODO: Add create_role=True parameter that will generate a service role with the same name
     # TODO: Ideally also inspect the code to see what boto clients it creates. In the generate step with imports?
+    if not is_arn(role):
+        role = iam.role(role).arn
     existing = get_if_exists(name)
     if existing:
         if package is not None:
@@ -387,6 +391,8 @@ def update_config(name, handler=None, role=None, runtime='python3.8', timeout=No
         'memory_size': 'MemorySize',
         'layers': 'Layers'
     })
+    if not is_arn(role):
+        config_params["Role"] = iam.role(role).arn
     lmbda = Lambda.from_create(client.update_function_configuration(**config_params))
     if await_updated:
         waiter = client.get_waiter('function_updated')
