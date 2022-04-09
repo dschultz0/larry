@@ -259,7 +259,7 @@ class labeling:
         if label_attribute_name is None:
             label_attribute_name = name
         if not is_arn(role_arn):
-            role = iam.role(role_arn).arn
+            role_arn = iam.role(role_arn).arn
         params = {
             'LabelingJobName': name,
             'LabelAttributeName': label_attribute_name,
