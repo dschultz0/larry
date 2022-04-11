@@ -175,6 +175,7 @@ def _line_iterator(blocks, width=None, height=None, page_indices=None):
     for block in blocks:
         if block['BlockType'] == 'LINE':
             if width and height:
-                yield _block_to_box(block, width, height, page_indices).data
+                if page_indices is None or len(page_indices) >= block['Page']:
+                    yield _block_to_box(block, width, height, page_indices).data
             else:
                 yield block
