@@ -4,6 +4,8 @@ import collections
 from larry import s3
 from larry.types import Box
 
+LOADED_FONT = None
+
 
 def scale_image_to_size(image=None, bucket=None, key=None, uri=None, max_pixels=None, max_bytes=None):
     try:
@@ -86,6 +88,19 @@ def render_boxes(boxes,
                  color_index=None):
     try:
         from PIL import ImageDraw, ImageFont, Image
+        loaded_font = None
+
+        def font():
+            nonlocal loaded_font
+            if not loaded_font:
+                try:
+                    loaded_font = ImageFont.truetype("arial.ttf", size=label_size)
+                except OSError:
+                    try:
+                        loaded_font = ImageFont.truetype("DejaVuSans.ttf", size=label_size)
+                    except OSError:
+                        loaded_font = ImageFont.load_default()
+            return loaded_font
 
         if isinstance(image, str):
             image = s3.read_as(Image, uri=image)
@@ -100,15 +115,6 @@ def render_boxes(boxes,
         label_size = 20 if label_size is None else label_size
 
         draw = ImageDraw.Draw(image)
-
-        # TODO Find a better way to pull in fonts
-        try:
-            font = ImageFont.truetype("arial.ttf", size=label_size)
-        except OSError:
-            try:
-                font = ImageFont.truetype("DejaVuSans.ttf", size=label_size)
-            except OSError:
-                font = ImageFont.load_default()
 
         for idx, item in enumerate(boxes):
             if annotation_filter is None or annotation_filter(idx, item):
@@ -135,12 +141,12 @@ def render_boxes(boxes,
                     else:
                         text = label(idx, item)
                     size = draw.textsize(text,
-                                         font=font,
+                                         font=font(),
                                          spacing=0)
                     draw.multiline_text((box[0] - size[0] - 4, box[1] + 4),
                                         text,
                                         fill=box_color,
-                                        font=font,
+                                        font=font(),
                                         spacing=0,
                                         align='right')
         return image
