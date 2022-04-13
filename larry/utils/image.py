@@ -102,7 +102,13 @@ def render_boxes(boxes,
         draw = ImageDraw.Draw(image)
 
         # TODO Find a better way to pull in fonts
-        font = ImageFont.truetype("arial.ttf", size=label_size)
+        try:
+            font = ImageFont.truetype("arial.ttf", size=label_size)
+        except OSError:
+            try:
+                font = ImageFont.truetype("DejaVuSans.ttf", size=label_size)
+            except OSError:
+                font = ImageFont.load_default()
 
         for idx, item in enumerate(boxes):
             if annotation_filter is None or annotation_filter(idx, item):
