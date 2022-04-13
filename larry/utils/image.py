@@ -85,13 +85,16 @@ def render_boxes(boxes,
                  label=None,
                  annotation_filter=None,
                  get_box=None,
-                 color_index=None):
+                 color_index=None,
+                 font=None):
     try:
         from PIL import ImageDraw, ImageFont, Image
         loaded_font = None
 
         def font():
             nonlocal loaded_font
+            if font:
+                return font
             if not loaded_font:
                 try:
                     loaded_font = ImageFont.truetype("arial.ttf", size=label_size)
