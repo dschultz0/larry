@@ -1083,8 +1083,7 @@ def list_objects(*location, bucket=None, prefix=None, uri=None, include_empty_ob
     :param include_empty_objects: True if you want to include keys associated with objects of size=0
     :return: A generator of s3 Objects
     """
-    bucket, key, uri = normalize_location(*location, bucket=bucket, key=prefix, uri=uri,
-                                          key_arg="prefix", require_key=False)
+    bucket, prefix, uri = normalize_location(*location, bucket=bucket, key=prefix, uri=uri)
     paginator = _get_resource().meta.client.get_paginator('list_objects_v2')
     operation_parameters = {'Bucket': bucket}
     if prefix:
@@ -1400,8 +1399,8 @@ def download_to_zip(file, bucket, prefix=None, prefixes=None):
         prefixes = [prefix]
     with ZipFile(file, 'w') as zf:
         for prefix in prefixes:
-            for key in list_objects(bucket, prefix):
-                zf.writestr(parse.quote(key.key), data=read(bucket, key))
+            for obj in list_objects(bucket, prefix):
+                zf.writestr(parse.quote(obj.key), data=read(obj))
 
 
 def split_uri(uri):
