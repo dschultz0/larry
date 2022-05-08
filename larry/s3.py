@@ -1350,7 +1350,10 @@ def create_bucket(bucket, acl=ACL_PRIVATE, region=None):
     if region is None:
         region = __session.region_name
     bucket_obj = Bucket(bucket=bucket)
-    bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
+    if region is None or region == 'us-east-1':
+        bucket_obj.create(ACL=acl)
+    else:
+        bucket_obj.create(ACL=acl, CreateBucketConfiguration={'LocationConstraint': region})
     bucket_obj.wait_until_exists()
     return bucket_obj
 
