@@ -1,4 +1,6 @@
 import json
+from decimal import Decimal
+from collections.abc import Mapping
 from datetime import datetime, timedelta
 from larry.mturk.HIT import HIT
 from larry.mturk.Assignment import Assignment
@@ -50,6 +52,36 @@ def json_loads(value, **kwargs):
 
 def json_dumps(value, **kwargs):
     return json.dumps(value, cls=JSONEncoder, **kwargs)
+
+
+def safe_json_dumps(value):
+    return json.dumps(correct_type_for_serialization(value))
+
+
+def correct_type_for_serialization(value):
+    if isinstance(value, Decimal):
+        return decimal_value(value)
+    elif isinstance(value, datetime):
+        return date_to_string(value)
+    elif isinstance(value, timedelta):
+        return round(value.total_seconds(), 3)
+    elif isinstance(value, Mapping):
+        return {key: correct_type_for_serialization(val) for key, val in value.items()}
+    elif isinstance(value, list):
+        return [correct_type_for_serialization(val) for val in value]
+    else:
+        return value
+
+
+def decimal_value(value):
+    if isinstance(value, Decimal):
+        if value.is_finite():
+            f = float(value)
+            return int(f) if f.is_integer() else f
+        else:
+            return str(value)
+    else:
+        return value
 
 
 def make_lambda_result_json_safe(value, encoder=JSONEncoder):
