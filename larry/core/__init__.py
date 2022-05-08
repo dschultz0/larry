@@ -5,6 +5,7 @@ from functools import wraps
 
 
 KWSPECS = {}
+ARGSPECS = {}
 
 
 def function_kwargs(fnc):
@@ -18,6 +19,20 @@ def function_kwargs(fnc):
 
 def supported_kwargs(fnc, **kwargs):
     return {k: v for k, v in kwargs.items() if k in function_kwargs(fnc)}
+
+
+def function_args(fnc):
+    try:
+        return ARGSPECS[fnc]
+    except KeyError:
+        spec = inspect.getfullargspec(fnc)
+        args = spec.args + spec.kwonlyargs
+        ARGSPECS[fnc] = args
+        return args
+
+
+def supported_args(fnc, **args):
+    return {k: v for k, v in args.items() if k in function_args(fnc)}
 
 
 def is_arn(value):
