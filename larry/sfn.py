@@ -5,7 +5,6 @@ import larry.core
 import boto3
 from collections.abc import Mapping
 
-
 # A local instance of the boto3 session to use
 __session = boto3.session.Session()
 client = __session.client('stepfunctions')
@@ -28,20 +27,53 @@ def set_session(aws_access_key_id=None,
     :return: None
     """
     global __session, client
-    __session = boto_session if boto_session is not None else boto3.session.Session(**larry.core.copy_non_null_keys(locals()))
+    __session = boto_session if boto_session is not None else boto3.session.Session(
+        **larry.core.copy_non_null_keys(locals()))
     client = __session.client('stepfunctions')
 
 
-def start_execution(state_machine_arn, input_=None, name=None, trace_header=None):
+def start_execution(state_machine_arn, input_=None, name=None, trace_header=None, sync=False, **kwargs):
     params = larry.core.map_parameters(locals(), {
         'state_machine_arn': 'stateMachineArn',
-        'input_': 'input',
         'name': 'name',
         'trace_header': 'TraceHeader'
     })
-    if 'input' in params and isinstance(params['input'], Mapping):
-        params['input'] = json.dumps(params['input'])
-    return client.start_execution(**params).get('executionArn')
+    if input_ is not None:
+        params["input"] = json.dumps(input_) if isinstance(input_, Mapping) else input_
+    elif kwargs:
+        params["input"] = json.dumps(kwargs)
+    if sync:
+        response = client.start_sync_execution(**params)
+        output = response.get("output")
+        if "error" in response:
+            raise Exception(f"{response['error']}: {response['cause']}")
+        elif output:
+            try:
+                return json.loads(output)
+            except json.JSONDecodeError:
+                return output
+        else:
+            return output
+    else:
+        return client.start_execution(**params).get('executionArn')
+
+
+def as_function(arn, sync=False):
+    def func(input_=None, **kwargs):
+        return start_execution(arn, input_=input_, sync=sync, **kwargs)
+
+    return func
+
+
+def get_map_progress(execution_arn, map_stage):
+    map_steps = [step for step in execution_history(execution_arn) if step.name == map_stage]
+    if map_steps:
+        total_steps = map_steps[0].previous_event.length
+        started = len([s for s in map_steps if s.event_type == "MapIterationStarted"])
+        completed = len([s for s in map_steps if s.event_type == "MapIterationSucceeded"])
+        return total_steps, started, completed
+    else:
+        return None, None, None
 
 
 def execution_history(execution_arn, reverse=False, include_execution_data=True):
@@ -313,8 +345,12 @@ class Event:
         return self._details.get("length")
 
     def __repr__(self):
-        lines = []
-        lines = [f"<Event {self.id}: {self.event_type} at {self.timestamp.strftime('%Y/%m/%d %H:%M:%S')} ({self.previous_event_id})"]
+        lines = ["<Event {}: {} at {} ({})".format(
+            self.id,
+            self.event_type,
+            self.timestamp.strftime('%Y/%m/%d %H:%M:%S'),
+            self.previous_event_id
+        )]
         buried_input = None
         for key, value in self._details.items():
             if key in ["cause", "input", "output"]:
