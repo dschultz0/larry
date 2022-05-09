@@ -451,18 +451,18 @@ def as_function(name, o_type=dict):
     :param o_type: A value defined in larry.types to specify how the Lambda response will be read
     :return: A function object
     """
-    def func(event):
+    def func(event, print_logs=False, **kwargs):
         return invoke_as(name, o_type, payload=event, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False)
     return func
 
 
-def invoke(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
+def invoke(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, include_logs=False, context=None, **kwargs):
     """
     Invokes a Lambda function.
     :param name: The name or ARN of the function
     :param payload: A dict or JSON string that you want to provide to the Lambda function
     :param invoke_type: The invocation type
-    :param logs: Set to true to include the execution log in the response
+    :param include_logs: Set to true to include the execution log in the response
     :param context: Up to 3583 bytes of base64-encoded data about the invoking client to pass to the
     function in the context object.
     :return: The response payload, also the logs if requested
@@ -477,7 +477,7 @@ def invoke(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=Fa
             params['Payload'] = json.dumps(payload, cls=utils.JSONEncoder)
         else:
             params['Payload'] = payload
-    if logs:
+    if include_logs:
         params['LogType'] = 'Tail'
         resp = client.invoke(**params)
         return resp['Payload'], base64.b64decode(resp['LogResult']).decode('utf-8').split('\n')
@@ -486,21 +486,21 @@ def invoke(name, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=Fa
         return resp['Payload']
 
 
-def invoke_as(name, o_type, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, logs=False, context=None):
+def invoke_as(name, o_type, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPONSE, include_logs=False, context=None, **kwargs):
     """
     Invokes a Lambda function and formats the response into the requested type.
     :param name: The name or ARN of the function
     :param o_type: A value defined in larry.types to specify how the Lambda response will be read
     :param payload: A dict or JSON string that you want to provide to the Lambda function
     :param invoke_type: The invocation type
-    :param logs: Set to true to include the execution log in the response
+    :param include_logs: Set to true to include the execution log in the response
     :param context: Up to 3583 bytes of base64-encoded data about the invoking client to pass to the
     function in the context object.
     :return: The response in the requested type, also the logs if requested
     """
-    result = invoke(name, payload=payload, invoke_type=invoke_type, logs=logs, context=context)
+    result = invoke(name, payload=payload, invoke_type=invoke_type, include_logs=include_logs, context=context, **kwargs)
     log = None
-    if logs:
+    if include_logs:
         payload, log = result
     else:
         payload = result
@@ -510,7 +510,7 @@ def invoke_as(name, o_type, payload=None, invoke_type=INVOKE_TYPE_REQUEST_RESPON
         result = json.loads(payload.read(), object_hook=utils.JSONDecoder)
     else:
         raise Exception('Unhandled type')
-    if logs:
+    if include_logs:
         return result, log
     else:
         return result
