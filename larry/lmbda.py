@@ -26,6 +26,7 @@ INVOKE_TYPE_REQUEST_RESPONSE = 'RequestResponse'
 INVOKE_TYPE_DRY_RUN = 'DryRun'
 INVOKE_TYPE_EVENT = 'Event'
 
+# TODO: Auto populate from AWS api
 RUNTIME_NODEJS = 'nodejs'
 RUNTIME_NODEJS_4_3 = 'nodejs4.3'
 RUNTIME_NODEJS_6_10 = 'nodejs6.10'
@@ -38,6 +39,7 @@ RUNTIME_PYTHON_2_7 = 'python2.7'
 RUNTIME_PYTHON_3_6 = 'python3.6'
 RUNTIME_PYTHON_3_7 = 'python3.7'
 RUNTIME_PYTHON_3_8 = 'python3.8'
+RUNTIME_PYTHON_3_9 = 'python3.9'
 RUNTIME_DOTNETCORE_1_0 = 'dotnetcore1.0'
 RUNTIME_DOTNETCORE_2_0 = 'dotnetcore2.0'
 RUNTIME_DOTNETCORE_2_1 = 'dotnetcore2.1'
@@ -47,6 +49,21 @@ RUNTIME_GO_1_X = 'go1.x'
 RUNTIME_RUBY_2_5 = 'ruby2.5'
 RUNTIME_RUBY_2_7 = 'ruby2.7'
 RUNTIME_PROVIDED = 'provided'
+
+# The set of libraries that are installed in /var/runtime for all Python Lambdas
+# TODO: Auto populate this based on a script to detect current modules
+LAMBDA_INSTALLED = {
+    "awslambdaric": "2.0.0",
+    "python-dateutil": "2.8.2",
+    "urllib3": "1.26.6",
+    "jmespath": "0.10.0",
+    "botocore": "1.23.32",
+    "simplejson": "3.17.2",
+    "boto3": "1.20.32",
+    "s3transfer": "0.5.2",
+    "six": "1.16.0",
+    "future": "0.18.2" # This is the only one not coming out of the lambda
+}
 
 
 def __getattr__(name):
@@ -235,6 +252,26 @@ def generate_code_from_function(handler,
     return code
 
 
+def __install_package_to_tmp(temp_dir, package):
+    """
+    This will install a package to the temp directory and manually install dependencies on a recursive basis while
+    excluding dependencies that are already natively available in the standard AWS Lambda python environment.
+    """
+    try:
+        from pkg_resources import WorkingSet, Requirement
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-t", temp_dir, package, "--no-deps"])
+        ws = WorkingSet([temp_dir])
+        dist = ws.find(Requirement(package))
+        for requirement in dist.requires():
+            if requirement.name not in LAMBDA_INSTALLED or LAMBDA_INSTALLED[requirement.name] not in requirement:
+                req = str(requirement)
+                req = req.split(";")[0] if ";" in req else req
+                __install_package_to_tmp(temp_dir, req)
+    except ImportError as ex:
+        print("Install setuputils (pip install setuputils) to support including packages")
+        raise ex
+
+
 def package_function(function,
                      imports=None,
                      functions=None,
@@ -275,13 +312,12 @@ def package_function(function,
         temp_dir = tempfile.mkdtemp()
         try:
             for package in packages:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "-t", temp_dir, package])
+                __install_package_to_tmp(temp_dir, package)
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     path = os.path.join(root, file)
                     zf.write(path, os.path.relpath(path, temp_dir))
         finally:
-            print(temp_dir)
             shutil.rmtree(temp_dir)
 
     for zfile in zf.filelist:
