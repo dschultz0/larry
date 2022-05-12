@@ -29,13 +29,20 @@ setuptools.setup(
     version=version,
     author="Dave Schultz",
     author_email="djschult@gmail.com",
-    description="Library of helper reference for common data tasks using AWS resources such as S3, MTurk and others",
+    description="Library of helper reference for common data tasks using AWS resources such as S3, Lambda, MTurk and others",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/dschultz0/larry",
     packages=setuptools.find_packages(exclude=['test']),
     include_package_data=False,
-    keywords="larry data aws boto3 mturk s3",
+    keywords="larry data aws boto3 mturk s3 lambda sfn",
+    python_requires=">=3.8",
+    extras_require={
+        "boto": ["boto3"],
+        "pdf": ["pdfminer.six"],
+        "image": ["Pillow"],
+        "jinja": ["Jinja2"]
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
