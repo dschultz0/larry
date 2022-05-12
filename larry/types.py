@@ -1,5 +1,6 @@
 from collections.abc import Mapping
 import warnings
+from typing import Dict
 
 
 class ClientError(Exception):
@@ -64,7 +65,72 @@ class ClientError(Exception):
         return self.__error.response['Error']['Message']
 
 
-class Box:
+class AttrObject:
+    _attributes = None
+
+    def __init__(self, attributes: Dict = None, **kwargs):
+        self._attributes = attributes
+        if kwargs:
+            if self._attributes is None:
+                self._attributes = kwargs
+            else:
+                self._attributes.update(kwargs)
+
+    @property
+    def attributes(self):
+        return self._attributes
+
+    def __getattr__(self, item):
+        if self._attributes and item in self._attributes:
+            return self._attributes[item]
+        raise AttributeError(f"AttributeError: '{self.__class__.__name__}' object has no attribute '{item}'")
+
+    def __getitem__(self, item):
+        if self._attributes and item in self._attributes:
+            return self._attributes[item]
+        raise KeyError(f"KeyError: '{item}'")
+
+    def __contains__(self, item):
+        return item in self._attributes if self._attributes else False
+
+    def get(self, key, default=None):
+        if self._attributes and key in self._attributes:
+            return self._attributes[key]
+        return default
+
+    def __setitem__(self, key, value):
+        if self._attributes is None:
+            self._attributes = {}
+        self._attributes[key] = value
+
+    def __delattr__(self, item):
+        if item == "attributes":
+            self._attributes = None
+        elif self._attributes:
+            del self._attributes[item]
+        else:
+            raise KeyError(f"KeyError: '{item}'")
+
+    def __delitem__(self, key):
+        if self._attributes:
+            del self._attributes[key]
+        else:
+            raise KeyError(f"KeyError: '{key}'")
+
+    def pop(self, item):
+        if self._attributes is None:
+            raise KeyError(f"KeyError: '{item}'")
+        return self._attributes.pop(item)
+
+    @property
+    def data(self):
+        return self._attributes if self._attributes else {}
+
+    def to_dict(self):
+        return self.data
+
+
+class Box(AttrObject):
     """
     A representation of a box that can handle the distinct coordinate systems used by the different AWS
     services, as well as various libraries. This provides a mechanism for moving between different systems and
@@ -105,16 +171,16 @@ class Box:
         print(json.dumps(box, cls=JSONEncoder)
     """
     MAX_SCALE = 6
-    _attributes = None
 
-    def __init__(self, value, attributes=None):
+    def __init__(self, value, attributes: Dict = None, **kwargs):
+        attr = None
         if isinstance(value, Box):
             self._coordinates = tuple(value.coordinates)
-            self._attributes = value.attributes.copy() if value.attributes else None
+            attr = value.attributes.copy() if value.attributes else None
         elif isinstance(value, list) or isinstance(value, tuple):
             self._coordinates = tuple(value)
-            self._attributes = attributes
-        elif isinstance(value, Mapping):
+            attr = attributes
+        elif isinstance(value, Dict):
             value = value.copy()
             self._coordinates = self.__case_insensitive_pop(value, "coordinates", raise_if_missing=False)
             if not self._coordinates:
@@ -126,11 +192,12 @@ class Box:
                 )
             if attributes:
                 value.update(attributes)
-            self._attributes = {k: v for k, v in value.items()
-                                if k.lower() not in ["coordinates", "left", "top", "width", "height", "__box__"]}
+            attr = {k: v for k, v in value.items()
+                    if k.lower() not in ["coordinates", "left", "top", "width", "height", "__box__"]}
         if len(self._coordinates) != 4:
             raise ValueError("Box coordinates must have exactly four values")
         self._coordinates = [round(c, self.MAX_SCALE) for c in self._coordinates]
+        AttrObject.__init__(self, attr, **kwargs)
 
     @property
     def coordinates(self):
@@ -161,61 +228,20 @@ class Box:
         return self._coordinates[2]
 
     @property
-    def attributes(self):
-        return self._attributes
-
-    @property
     def area(self):
         """
         Returns the area of the Box in square pixels
         """
         return abs(self)
 
-    def __getattr__(self, item):
-        if self._attributes and item in self._attributes:
-            return self._attributes[item]
-        raise AttributeError(f"AttributeError: 'Box' object has no attribute '{item}'")
-
-    def __getitem__(self, item):
-        if self._attributes and item in self._attributes:
-            return self._attributes[item]
-        raise KeyError(f"KeyError: '{item}'")
-
-    def __contains__(self, item):
-        return item in self._attributes if self._attributes else False
-
-    def get(self, key, default=None):
-        if self._attributes and key in self._attributes:
-            return self._attributes[key]
-        return default
-
-    def __setitem__(self, key, value):
-        if self._attributes is None:
-            self._attributes = {}
-        self._attributes[key] = value
-
     def copy(self, location_only=False):
         return Box(tuple(self._coordinates),
                    self._attributes.copy() if self._attributes and not location_only else None)
 
-    def __delattr__(self, item):
-        if item == "attributes":
-            self._attributes = None
-        elif self._attributes:
-            del self._attributes[item]
-        else:
-            raise KeyError(f"KeyError: '{item}'")
-
-    def __delitem__(self, key):
-        if self._attributes:
-            del self._attributes[key]
-        else:
-            raise KeyError(f"KeyError: '{key}'")
-
-    def pop(self, item):
-        if self._attributes is None:
-            raise KeyError(f"KeyError: '{item}'")
-        return self._attributes.pop(item)
+    def with_attributes(self, additional_attributes: dict):
+        attr = self._attributes.copy()
+        attr.update(additional_attributes)
+        return Box(tuple(self._coordinates), attr)
 
     @classmethod
     def from_dict(cls, obj):
@@ -439,5 +465,160 @@ class Box:
         })
         return d
 
-    def to_dict(self):
-        return self.data
+
+class Page(AttrObject):
+    """
+    A representation of a "page" of shape elements such as Box and the relevant information about the page
+    source to support operations on the contents.
+    """
+    def __init__(self, width: float, height: float, contents: [Box] = None, index: int = None, identifier=None,
+                 attributes: Dict = None, **kwargs):
+        self._width = width
+        self._height = height
+        self._contents = contents
+        self._index = index
+        self._identifier = identifier
+        AttrObject.__init__(self, attributes, **kwargs)
+
+    @property
+    def width(self) -> float:
+        return self._width
+
+    @property
+    def height(self) -> float:
+        return self._height
+
+    @property
+    def size(self) -> []:
+        return [self._width, self._height]
+
+    @property
+    def contents(self) -> [Box]:
+        return self._contents
+
+    @property
+    def index(self) -> int:
+        return self._index
+
+    @property
+    def identifier(self):
+        return self._identifier
+
+    def __repr__(self):
+        lines = [
+            f"<Page {self._identifier} containing {len(self._contents)} items",
+            f"  - width: {self._width}",
+            f"  - height: {self._height}",
+        ]
+        if self.attributes:
+            for k, v in self.attributes.items():
+                lines.append(f"  - {k}: {v}")
+        if self._contents:
+            lines.append("  - contents:")
+            lines.extend(["    " + repr(b) for b in self._contents[:10]])
+            if len(self._contents) > 10:
+                lines.append("    ...")
+        lines.append(">")
+        return "\n".join(lines)
+
+
+class PageList(AttrObject):
+    """
+    A set of Page objects
+    """
+    def __init__(self, pages: [Page] = None, vertical: bool = True, attributes: Dict = None, **kwargs):
+        self._pages = pages if pages else []
+        self._vertical = vertical
+        AttrObject.__init__(self, attributes, **kwargs)
+
+    @classmethod
+    def from_indices(cls, indices: list[list]):
+        return cls([Page(ind[2]-ind[0], ind[3]-ind[1], index=i, identifier=i) for i, ind in enumerate(indices)])
+
+    def __len__(self):
+        return len(self._pages)
+
+    def __iter__(self):
+        self.n = 0
+        return self
+
+    def __next__(self) -> Page:
+        if self.n < len(self._pages):
+            result = self._pages[self.n]
+            self.n += 1
+            return result
+        else:
+            raise StopIteration
+
+    def __getitem__(self, item):
+        return self._pages[item]
+
+    def append(self, page: Page):
+        self._pages.append(page)
+
+    @property
+    def vertical(self):
+        return self._vertical
+
+    @property
+    def width(self):
+        if self._vertical:
+            return max([page.width for page in self._pages])
+        else:
+            return sum([page.width for page in self._pages])
+
+    @property
+    def height(self):
+        if self._vertical:
+            return sum([page.height for page in self._pages])
+        else:
+            return max([page.height for page in self._pages])
+
+    @property
+    def page_offsets(self) -> [[float, float]]:
+        offsets = []
+        index = 0
+        for page in self._pages:
+            if self._vertical:
+                offsets.append([0, index])
+                index += page.height
+            else:
+                offsets.append([index, 0])
+                index += page.width
+        return offsets
+
+    def consolidate_content(self, target, max_dimension_variance: float = 0.01):
+        if len(self) != len(target):
+            raise Exception("Page counts don't match")
+        if self._vertical != target.vertical:
+            raise Exception("The target orientation doesn't match")
+
+        # Adjust the coordinates to align with the target
+        # Scale the content to match the dimensions of the target
+        width_ratio = target.width / self.width
+        height_ratio = target.height / self.height
+
+        # Confirm the ratio of width and height are reasonably close
+        if abs(width_ratio / height_ratio - 1) > max_dimension_variance:
+            raise Exception(f"Mismatched width and height ratios: ({width_ratio}, {height_ratio})")
+
+        return [
+            (box * height_ratio) + offset
+            for page, offset in zip(self, target.page_offsets)
+            for box in page.contents
+        ]
+
+    def __repr__(self):
+        lines = [
+            f"<PageSet containing {len(self._pages)} pages",
+            f"  - width: {self.width}",
+            f"  - height: {self.height}",
+        ]
+        if self.attributes:
+            for k, v in self.attributes.items():
+                lines.append(f"  - {k}: {v}")
+        if self._pages:
+            lines.append("  - pages:")
+            lines.extend(["    " + s for p in self._pages for s in repr(p).split("\n")])
+        lines.append(">")
+        return "\n".join(lines)

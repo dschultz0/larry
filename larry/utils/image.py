@@ -2,7 +2,7 @@ import math
 from io import BytesIO
 import collections
 from larry import s3
-from larry.types import Box
+from larry.types import Box, PageList
 
 LOADED_FONT = None
 
@@ -304,3 +304,8 @@ def join_images(images, horizontal=True):
     except ImportError as e:
         # Simply raise the ImportError to let the user know this requires Pillow to function
         raise e
+
+
+def join_images_as_pages(images, horizontal=False):
+    image, indices = join_images(images, horizontal)
+    return image, PageList.from_indices(indices)
