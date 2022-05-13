@@ -505,8 +505,13 @@ class Page(AttrObject):
         return self._identifier
 
     def __repr__(self):
+        first_line = "<Page "
+        if self._identifier:
+            first_line += f"{self._identifier} "
+        if self._contents:
+            first_line += "containing {len(self._contents)} items"
         lines = [
-            f"<Page {self._identifier} containing {len(self._contents)} items",
+            first_line,
             f"  - width: {self._width}",
             f"  - height: {self._height}",
         ]
@@ -533,6 +538,7 @@ class PageList(AttrObject):
 
     @classmethod
     def from_indices(cls, indices: list[list]):
+        # TODO: Fix the class so that it handles scenarios with indexes that don't abut each other
         return cls([Page(ind[2]-ind[0], ind[3]-ind[1], index=i, identifier=i) for i, ind in enumerate(indices)])
 
     def __len__(self):
@@ -586,6 +592,13 @@ class PageList(AttrObject):
                 offsets.append([index, 0])
                 index += page.width
         return offsets
+
+    @property
+    def page_indices(self) -> [[float, float, float, float]]:
+        return [[indices[0],
+                 indices[1],
+                 indices[0] + page.width,
+                 indices[1] + page.height] for page, indices in zip(self, self.page_offsets)]
 
     def consolidate_content(self, target, max_dimension_variance: float = 0.01):
         if len(self) != len(target):
