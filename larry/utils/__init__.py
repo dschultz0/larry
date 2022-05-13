@@ -21,6 +21,8 @@ class JSONEncoder(json.JSONEncoder):
             return date_to_string(obj)
         elif isinstance(obj, timedelta):
             return round(obj.total_seconds(), 3)
+        elif isinstance(obj, set):
+            return list(obj)
         elif isinstance(obj, HIT):
             hit = {i: obj[i] for i in obj if i != 'Question'}
             hit['__HIT__'] = True
@@ -67,7 +69,7 @@ def correct_type_for_serialization(value):
         return round(value.total_seconds(), 3)
     elif isinstance(value, Mapping):
         return {key: correct_type_for_serialization(val) for key, val in value.items()}
-    elif isinstance(value, list):
+    elif isinstance(value, list) or isinstance(value, set):
         return [correct_type_for_serialization(val) for val in value]
     else:
         return value
